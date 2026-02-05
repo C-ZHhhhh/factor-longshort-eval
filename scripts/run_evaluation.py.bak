@@ -1,0 +1,1011 @@
+"""
+统一评估入口
+
+生成完整的因子回测评估报告，包括：
+1. 性能表格 (performance_table.csv + .md)
+2. Drawdown 统计 (drawdown_stats.csv)
+3. 毛收益 vs 净收益对比图
+4. 市场暴露分析 (exposure_summary.md)
+5. 稳健性测试表格 (robustness_table.csv + .md)
+6. 综合评估报告 (EVALUATION_REPORT.md)
+
+使用方法:
+    python scripts/run_evaluation.py
+"""
+
+import sys
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+# 添加项目根目录
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from data.data_loader import DataLoader
+from evaluation.multi_factor_comparison import MultiFactorComparator
+from evaluation.performance_table_generator import PerformanceTableGenerator
+from evaluation.market_exposure_analyzer import MarketExposureAnalyzer
+from evaluation.robustness import RobustnessTest
+from visualization.factor_visualizer import FactorVisualizer
+from utils.logger import get_logger
+from utils.config import config
+
+logger = get_logger(__name__)
+
+
+class UnifiedEvaluator:
+    """
+    统一评估器
+
+    整合所有评估模块，生成完整的评估报告
+    """
+
+    def __init__(
+        self,
+        rebalance_freq: str = '2monthly',
+        min_holding_periods: int = 12,
+        entry_quantile: float = 0.25,
+        exit_quantile: float = 0.30,
+        cost_bps: float = 20.0,
+        split_date: str = '2020-01-01'
+    ):
+        """
+        初始化统一评估器
+
+        Parameters:
+        -----------
+        rebalance_freq : str
+            调仓频率
+        min_holding_periods : int
+            最小持有期(月)
+        entry_quantile : float
+            进入阈值
+        exit_quantile : float
+            退出阈值
+        cost_bps : float
+            交易成本(bps)
+        split_date : str
+            子样本分割日期
+        """
+        self.rebalance_freq = rebalance_freq
+        self.min_holding_periods = min_holding_periods
+        self.entry_quantile = entry_quantile
+        self.exit_quantile = exit_quantile
+        self.cost_bps = cost_bps
+        self.split_date = split_date
+
+        # 初始化子模块
+        self.comparator = MultiFactorComparator(
+            rebalance_freq=rebalance_freq,
+            min_holding_periods=min_holding_periods,
+            entry_quantile=entry_quantile,
+            exit_quantile=exit_quantile,
+            cost_bps=cost_bps
+        )
+
+        self.performance_table_gen = PerformanceTableGenerator()
+        self.market_exposure_analyzer = MarketExposureAnalyzer(beta_threshold=0.1)
+        self.robustness_tester = RobustnessTest()
+
+        logger.info("统一评估器已初始化")
+
+    def run_full_evaluation(
+        self,
+        df_clean: dict,
+        output_dir: str = 'results',
+        factor_names: list = None
+    ) -> dict:
+        """
+        运行完整评估
+
+        Parameters:
+        -----------
+        df_clean : dict
+            清洗后的数据
+        output_dir : str
+            输出目录
+        factor_names : list, optional
+            要评估的因子列表
+
+        Returns:
+        --------
+        results : dict
+            所有评估结果
+        """
+        logger.info("="*100)
+        logger.info("开始统一评估流程")
+        logger.info("="*100)
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # 默认因子列表
+        if factor_names is None:
+            factor_names = ['Momentum', 'Reversal', 'LowVolatility', 'Trend']
+
+        # ===== 第1步：多因子回测 =====
+        logger.info("\n" + "="*80)
+        logger.info("[1/7] 运行多因子回测")
+        logger.info("="*80)
+
+        # 运行回测并获取详细结果
+        backtest_results = {}
+        ic_results = {}
+        factor_values = {}
+
+        for factor_name in factor_names:
+            logger.info(f"\n回测 {factor_name}...")
+            try:
+                result = self.comparator.run_single_factor(factor_name, df_clean)
+                backtest_results[factor_name] = result
+
+                # 保存因子值用于相关性分析
+                factor_obj = self.comparator.FACTOR_MAP[factor_name]()
+                if factor_name == 'Liquidity':
+                    if 'volume' in df_clean and df_clean['volume'] is not None:
+                        df_factor = factor_obj.calculate(
+                            df_price=df_clean['price'],
+                            df_volume=df_clean['volume']
+                        )
+                    else:
+                        logger.warning(f"{factor_name} 需要成交量数据，跳过")
+                        continue
+                else:
+                    df_factor = factor_obj.calculate(
+                        df_price=df_clean['price'],
+                        df_return_daily=df_clean.get('daily_return')
+                    )
+
+                # 标准化
+                from factors.factor_processor import FactorProcessor
+                processor = FactorProcessor()
+                df_factor = processor.winsorize(df_factor)
+                df_factor = processor.zscore_standardize(df_factor)
+                factor_values[factor_name] = df_factor
+
+                # IC分析 (使用 lag=1 确保 factor_t 预测 return_t+1)
+                from evaluation.ic_analysis import ICAnalyzer
+                ic_analyzer = ICAnalyzer()
+
+                # 正确的 IC 计算: factor_t vs return_t+1
+                ic_result = ic_analyzer.analyze_with_lag(
+                    df_factor=df_factor,
+                    df_return=df_clean['monthly_return'],
+                    lag=1  # 因子 shift(1) 后与收益对齐
+                )
+                ic_results[factor_name] = ic_result
+
+                # IC Sanity Check: 检测时间对齐错误
+                sanity_result = ic_analyzer.sanity_check_alignment(
+                    df_factor=df_factor,
+                    df_return=df_clean['monthly_return'],
+                    factor_name=factor_name
+                )
+                if 'ic_sanity_checks' not in locals():
+                    ic_sanity_checks = {}
+                ic_sanity_checks[factor_name] = sanity_result
+
+            except Exception as e:
+                logger.error(f"{factor_name} 回测失败: {e}")
+                continue
+
+        # 合成因子
+        logger.info("\n回测 Composite...")
+        try:
+            composite_result = self.comparator.run_composite_factor(df_clean, factor_names)
+            backtest_results['Composite'] = composite_result
+        except Exception as e:
+            logger.error(f"Composite 回测失败: {e}")
+
+        # ===== 权重中性化验证 =====
+        logger.info("\n" + "="*80)
+        logger.info("权重中性化验证")
+        logger.info("="*80)
+
+        weight_stats = self._verify_weight_neutrality(backtest_results, output_dir)
+
+        # ===== 第2步：生成性能表格 =====
+        logger.info("\n" + "="*80)
+        logger.info("[2/7] 生成性能表格")
+        logger.info("="*80)
+
+        df_performance = self.performance_table_gen.generate_performance_table(
+            backtest_results=backtest_results,
+            output_dir=output_dir
+        )
+
+        # ===== 第3步：生成可视化图表 =====
+        logger.info("\n" + "="*80)
+        logger.info("[3/7] 生成可视化图表")
+        logger.info("="*80)
+
+        visualizer = FactorVisualizer(output_dir=output_dir)
+        figures = visualizer.generate_all_plots(
+            backtest_results=backtest_results,
+            ic_results=ic_results,
+            factor_values=factor_values
+        )
+
+        # ===== 第4步：市场暴露分析 =====
+        logger.info("\n" + "="*80)
+        logger.info("[4/7] 市场暴露分析")
+        logger.info("="*80)
+
+        # 需要 SPY 收益率数据
+        strategy_returns = {
+            name: result['returns']
+            for name, result in backtest_results.items()
+        }
+
+        # 使用 SPY 作为市场基准（如果有的话）
+        if 'SPY' in df_clean:
+            market_returns = df_clean['SPY']
+        else:
+            # 或者使用市场等权组合
+            logger.warning("未找到SPY数据，使用股票等权组合作为市场基准")
+            market_returns = df_clean['monthly_return'].mean(axis=1)
+
+        exposure_results = self.market_exposure_analyzer.analyze_market_exposure(
+            strategy_returns=strategy_returns,
+            market_returns=market_returns,
+            output_dir=output_dir,
+            rolling_window=12
+        )
+
+        # ===== 第5步：稳健性测试 =====
+        logger.info("\n" + "="*80)
+        logger.info("[5/7] 稳健性测试")
+        logger.info("="*80)
+
+        robustness_results = self._run_robustness_tests(
+            df_clean=df_clean,
+            factor_names=factor_names,
+            output_dir=output_dir
+        )
+
+        # ===== 第6步：生成综合评估报告 =====
+        logger.info("\n" + "="*80)
+        logger.info("[6/7] 生成综合评估报告")
+        logger.info("="*80)
+
+        evaluation_report = self._create_evaluation_report(
+            df_performance=df_performance,
+            exposure_results=exposure_results,
+            robustness_results=robustness_results,
+            ic_results=ic_results
+        )
+
+        report_file = output_path / 'EVALUATION_REPORT.md'
+        with open(report_file, 'w', encoding='utf-8') as f:
+            f.write(evaluation_report)
+        logger.info(f"✅ 综合评估报告已保存: {report_file}")
+
+        # 生成 IC Sanity Check 报告
+        if 'ic_sanity_checks' in locals():
+            ic_sanity_md = self._create_ic_sanity_check_report(ic_sanity_checks)
+            ic_sanity_file = output_path / 'ic_sanity_checks.md'
+            with open(ic_sanity_file, 'w', encoding='utf-8') as f:
+                f.write(ic_sanity_md)
+            logger.info(f"✅ IC Sanity Check 报告已保存: {ic_sanity_file}")
+
+        # ===== 第7步：汇总结果 =====
+        logger.info("\n" + "="*80)
+        logger.info("[7/7] 汇总结果")
+        logger.info("="*80)
+
+        results = {
+            'backtest_results': backtest_results,
+            'performance_table': df_performance,
+            'exposure': exposure_results,
+            'robustness': robustness_results,
+            'ic_results': ic_results,
+            'figures': figures,
+            'output_dir': output_dir
+        }
+
+        logger.info("\n" + "="*100)
+        logger.info("✅ 统一评估流程完成")
+        logger.info(f"   输出目录: {output_dir}")
+        logger.info(f"   生成文件:")
+        logger.info(f"     - performance_table.csv/.md")
+        logger.info(f"     - drawdown_stats.csv")
+        logger.info(f"     - exposure_summary.md")
+        logger.info(f"     - exposure_stats.csv")
+        logger.info(f"     - robustness_table.csv/.md")
+        logger.info(f"     - EVALUATION_REPORT.md")
+        logger.info(f"     - 各类可视化图表 (PNG)")
+        logger.info("="*100)
+
+        return results
+
+    def _verify_weight_neutrality(
+        self,
+        backtest_results: dict,
+        output_dir: str
+    ) -> dict:
+        """
+        验证权重中性化
+
+        检查每个策略的权重是否满足：
+        - sum(w) = 0
+        - sum(w_pos) = +1
+        - sum(|w_neg|) = 1
+        """
+        output_path = Path(output_dir)
+
+        weight_stats_data = []
+
+        for factor_name, result in backtest_results.items():
+            if 'holdings_history' not in result:
+                logger.warning(f"{factor_name} 没有权重历史，跳过验证")
+                continue
+
+            df_weights = result['holdings_history']
+
+            logger.info(f"\n验证 {factor_name} 权重中性化...")
+
+            # 计算每期权重统计
+            weight_sums = df_weights.sum(axis=1)
+            weight_pos_sums = df_weights[df_weights > 0].sum(axis=1)
+            weight_neg_sums = df_weights[df_weights < 0].sum(axis=1).abs()
+
+            # 整体统计
+            mean_sum_w = weight_sums.mean()
+            max_abs_sum_w = weight_sums.abs().max()
+            mean_sum_w_pos = weight_pos_sums.mean()
+            mean_abs_sum_w_neg = weight_neg_sums.mean()
+
+            logger.info(f"  mean(sum_w) = {mean_sum_w:.10f}")
+            logger.info(f"  max(abs(sum_w)) = {max_abs_sum_w:.10f}")
+            logger.info(f"  mean(sum_w_pos) = {mean_sum_w_pos:.6f}")
+            logger.info(f"  mean(abs(sum_w_neg)) = {mean_abs_sum_w_neg:.6f}")
+
+            # 验证阈值
+            is_neutral = max_abs_sum_w < 1e-6
+            is_balanced = (abs(mean_sum_w_pos - 1.0) < 0.01 and
+                          abs(mean_abs_sum_w_neg - 1.0) < 0.01)
+
+            if is_neutral and is_balanced:
+                logger.info(f"  ✅ {factor_name} 权重中性化验证通过")
+            else:
+                logger.warning(f"  ⚠️  {factor_name} 权重中性化验证未通过!")
+                if not is_neutral:
+                    logger.warning(f"     sum(w) 不为0: max(abs(sum_w)) = {max_abs_sum_w}")
+                if not is_balanced:
+                    logger.warning(f"     多空不平衡: pos={mean_sum_w_pos:.6f}, neg={mean_abs_sum_w_neg:.6f}")
+
+            # 前5期详细数据
+            first_5_periods = []
+            for i in range(min(5, len(df_weights))):
+                sum_w = weight_sums.iloc[i]
+                sum_w_pos = weight_pos_sums.iloc[i]
+                sum_w_neg = weight_neg_sums.iloc[i]
+                first_5_periods.append({
+                    'period': i + 1,
+                    'sum_w': sum_w,
+                    'sum_w_pos': sum_w_pos,
+                    'sum_w_neg': sum_w_neg
+                })
+
+            weight_stats_data.append({
+                'factor': factor_name,
+                'mean_sum_w': mean_sum_w,
+                'max_abs_sum_w': max_abs_sum_w,
+                'mean_sum_w_pos': mean_sum_w_pos,
+                'mean_abs_sum_w_neg': mean_abs_sum_w_neg,
+                'is_neutral': is_neutral,
+                'is_balanced': is_balanced,
+                'first_5_periods': first_5_periods
+            })
+
+        # 保存权重中性化统计
+        df_weight_stats = pd.DataFrame([
+            {
+                'factor': stats['factor'],
+                'mean_sum_w': stats['mean_sum_w'],
+                'max_abs_sum_w': stats['max_abs_sum_w'],
+                'mean_sum_w_pos': stats['mean_sum_w_pos'],
+                'mean_abs_sum_w_neg': stats['mean_abs_sum_w_neg'],
+                'is_neutral': stats['is_neutral'],
+                'is_balanced': stats['is_balanced']
+            }
+            for stats in weight_stats_data
+        ])
+
+        csv_file = output_path / 'weight_neutrality_stats.csv'
+        df_weight_stats.to_csv(csv_file, index=False, float_format='%.12f')
+        logger.info(f"\n✅ 权重中性化统计已保存: {csv_file}")
+
+        # 输出前5期详细数据
+        for stats in weight_stats_data:
+            logger.info(f"\n{stats['factor']} 前5期权重:")
+            for period_data in stats['first_5_periods']:
+                logger.info(
+                    f"  期 {period_data['period']}: "
+                    f"sum_w={period_data['sum_w']:.10f}, "
+                    f"sum_w_pos={period_data['sum_w_pos']:.6f}, "
+                    f"sum_w_neg={period_data['sum_w_neg']:.6f}"
+                )
+
+        return {'stats': weight_stats_data, 'df': df_weight_stats}
+
+    def _run_robustness_tests(
+        self,
+        df_clean: dict,
+        factor_names: list,
+        output_dir: str
+    ) -> dict:
+        """运行稳健性测试"""
+
+        robustness_data = []
+
+        # 选择最佳因子进行稳健性测试
+        best_factor_name = factor_names[0]  # 可以改为根据 Sharpe 选择
+
+        logger.info(f"对 {best_factor_name} 进行稳健性测试...")
+
+        # 计算因子
+        factor_obj = self.comparator.FACTOR_MAP[best_factor_name]()
+        df_factor = factor_obj.calculate(
+            df_price=df_clean['price'],
+            df_return_daily=df_clean.get('daily_return')
+        )
+
+        from factors.factor_processor import FactorProcessor
+        processor = FactorProcessor()
+        df_factor = processor.winsorize(df_factor)
+        df_factor = processor.zscore_standardize(df_factor)
+
+        # 运行稳健性测试
+        robustness_result = self.robustness_tester.analyze_robustness(
+            df_factor=df_factor,
+            df_return=df_clean['monthly_return'],
+            split_date=self.split_date
+        )
+
+        # 1. 子样本测试
+        logger.info("\n子样本测试结果:")
+        for period_name, result in robustness_result['sub_sample'].items():
+            metrics = result['metrics']
+            robustness_data.append({
+                'test_type': '子样本',
+                'parameter': period_name,
+                'annual_return': metrics['annual_return'],
+                'sharpe': metrics['sharpe_ratio'],
+                'max_drawdown': metrics['max_drawdown'],
+                'turnover': result.get('avg_turnover', np.nan)
+            })
+            logger.info(f"  {period_name}: Sharpe={metrics['sharpe_ratio']:.4f}, Return={metrics['annual_return']:.2%}")
+
+        # 2. 成本敏感性测试
+        logger.info("\n成本敏感性测试结果:")
+        df_cost_sens = robustness_result['cost_sensitivity']
+        for _, row in df_cost_sens.iterrows():
+            robustness_data.append({
+                'test_type': '成本敏感性',
+                'parameter': f"{row['cost_bps']:.0f} bps",
+                'annual_return': row['annual_return'],
+                'sharpe': row['sharpe_ratio'],
+                'max_drawdown': row['max_drawdown'],
+                'turnover': row.get('avg_turnover', np.nan)
+            })
+            logger.info(f"  {row['cost_bps']:.0f} bps: Sharpe={row['sharpe_ratio']:.4f}, Return={row['annual_return']:.2%}")
+
+        # 3. 分位数敏感性测试
+        logger.info("\n分位数敏感性测试结果:")
+        df_quant_sens = robustness_result['quantile_sensitivity']
+        for _, row in df_quant_sens.iterrows():
+            q_val = row['entry_quantile']
+            robustness_data.append({
+                'test_type': '分位数敏感性',
+                'parameter': f"Q={int(q_val*100)}%",
+                'annual_return': row['annual_return'],
+                'sharpe': row['sharpe_ratio'],
+                'max_drawdown': row['max_drawdown'],
+                'turnover': row.get('avg_turnover', np.nan)
+            })
+            logger.info(f"  Q={int(q_val*100)}%: Sharpe={row['sharpe_ratio']:.4f}, Return={row['annual_return']:.2%}")
+
+        # 保存稳健性表格
+        df_robustness = pd.DataFrame(robustness_data)
+        output_path = Path(output_dir)
+
+        csv_file = output_path / 'robustness_table.csv'
+        df_robustness.to_csv(csv_file, index=False, float_format='%.6f')
+        logger.info(f"\n✅ 稳健性表格已保存: {csv_file}")
+
+        # 保存 Markdown
+        md_content = self._create_robustness_markdown(df_robustness)
+        md_file = output_path / 'robustness_table.md'
+        with open(md_file, 'w', encoding='utf-8') as f:
+            f.write(md_content)
+        logger.info(f"✅ 稳健性Markdown已保存: {md_file}")
+
+        return {
+            'table': df_robustness,
+            'raw': robustness_result
+        }
+
+    def _create_robustness_markdown(self, df_robustness: pd.DataFrame) -> str:
+        """创建稳健性测试 Markdown 表格"""
+
+        md = f"""# 稳健性测试表格
+
+生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+## 子样本测试
+
+| 时间段 | 年化收益 | Sharpe | 最大回撤 | 平均换手率 |
+|--------|---------|--------|----------|-----------|
+"""
+
+        sub_sample_df = df_robustness[df_robustness['test_type'] == '子样本']
+        for _, row in sub_sample_df.iterrows():
+            param_str = str(row['parameter'])
+            turnover_str = f"{row['turnover']:.4f}" if not pd.isna(row['turnover']) else 'N/A'
+            md += (
+                f"| {param_str} "
+                f"| {row['annual_return']:.4f} "
+                f"| {row['sharpe']:.4f} "
+                f"| {row['max_drawdown']:.4f} "
+                f"| {turnover_str} |\n"
+            )
+
+        md += """
+---
+
+## 成本敏感性测试
+
+| 成本 | 年化收益 | Sharpe | 最大回撤 | 平均换手率 |
+|------|---------|--------|----------|-----------|
+"""
+
+        cost_sens_df = df_robustness[df_robustness['test_type'] == '成本敏感性']
+        for _, row in cost_sens_df.iterrows():
+            param_str = str(row['parameter'])
+            turnover_str = f"{row['turnover']:.4f}" if not pd.isna(row['turnover']) else 'N/A'
+            md += (
+                f"| {param_str} "
+                f"| {row['annual_return']:.4f} "
+                f"| {row['sharpe']:.4f} "
+                f"| {row['max_drawdown']:.4f} "
+                f"| {turnover_str} |\n"
+            )
+
+        md += """
+---
+
+## 分位数敏感性测试
+
+| 分位数 | 年化收益 | Sharpe | 最大回撤 | 平均换手率 |
+|--------|---------|--------|----------|-----------|
+"""
+
+        quant_sens_df = df_robustness[df_robustness['test_type'] == '分位数敏感性']
+        for _, row in quant_sens_df.iterrows():
+            param_str = str(row['parameter'])
+            turnover_str = f"{row['turnover']:.4f}" if not pd.isna(row['turnover']) else 'N/A'
+            md += (
+                f"| {param_str} "
+                f"| {row['annual_return']:.4f} "
+                f"| {row['sharpe']:.4f} "
+                f"| {row['max_drawdown']:.4f} "
+                f"| {turnover_str} |\n"
+            )
+
+        md += """
+---
+
+*本报告由统一评估器自动生成*
+"""
+
+        return md
+
+    def _create_evaluation_report(
+        self,
+        df_performance: pd.DataFrame,
+        exposure_results: dict,
+        robustness_results: dict,
+        ic_results: dict
+    ) -> str:
+        """创建综合评估报告"""
+
+        # 获取最佳策略
+        best_strategy = df_performance.iloc[0]
+
+        md = f"""# 因子回测系统 - 综合评估报告
+
+**生成时间**: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+## Executive Summary
+
+"""
+
+        # 生成 Executive Summary (3-6条关键发现)
+        summary_points = []
+
+        # 1. 最佳策略
+        summary_points.append(
+            f"1. **最佳策略**: {best_strategy['factor']} - "
+            f"年化收益 {best_strategy['annual_return_net']:.2%}, "
+            f"Sharpe {best_strategy['sharpe']:.4f}, "
+            f"最大回撤 {best_strategy['max_drawdown']:.2%}"
+        )
+
+        # 2. 成本影响
+        avg_cost_drag = df_performance['cost_drag_annual'].mean()
+        summary_points.append(
+            f"2. **成本影响**: 平均成本拖累 {avg_cost_drag:.2%}/年, "
+            f"平均换手率 {df_performance['avg_turnover'].mean():.2%}"
+        )
+
+        # 3. 市场暴露
+        if exposure_results and 'full_sample' in exposure_results:
+            best_beta = exposure_results['full_sample'][best_strategy['factor']]['beta']
+            best_r2 = exposure_results['full_sample'][best_strategy['factor']]['r_squared']
+            summary_points.append(
+                f"3. **市场暴露**: {best_strategy['factor']} Beta={best_beta:.4f}, "
+                f"R²={best_r2:.2%} ({'良好' if abs(best_beta) < 0.1 else '需优化'})"
+            )
+
+        # 4. IC/IR 表现
+        if ic_results and best_strategy['factor'] in ic_results:
+            ic_stats = ic_results[best_strategy['factor']]
+            summary_points.append(
+                f"4. **因子有效性**: {best_strategy['factor']} IC均值={ic_stats['ic_mean']:.4f}, "
+                f"IR={ic_stats['ir']:.4f}, "
+                f"IC正占比={ic_stats['ic_positive_ratio']:.2%}"
+            )
+
+        # 5. 稳健性
+        if robustness_results and 'table' in robustness_results:
+            sub_sample_data = robustness_results['table'][
+                robustness_results['table']['test_type'] == '子样本'
+            ]
+            if len(sub_sample_data) >= 2:
+                sharpe_std = sub_sample_data['sharpe'].std()
+                summary_points.append(
+                    f"5. **稳健性**: 子样本 Sharpe 标准差 {sharpe_std:.4f} "
+                    f"({'稳定' if sharpe_std < 0.3 else '波动较大'})"
+                )
+
+        # 6. Composite 表现
+        if 'Composite' in df_performance['factor'].values:
+            composite_row = df_performance[df_performance['factor'] == 'Composite'].iloc[0]
+            composite_rank = df_performance.index[df_performance['factor'] == 'Composite'][0] + 1
+            summary_points.append(
+                f"6. **合成因子**: Composite 排名 {composite_rank}/{len(df_performance)}, "
+                f"Sharpe {composite_row['sharpe']:.4f}"
+            )
+
+        for point in summary_points:
+            md += f"{point}\n\n"
+
+        md += """
+---
+
+## 6.1 主结果 (引用 performance table)
+
+详见 [performance_table.md](performance_table.md) 和 [drawdown_stats.csv](drawdown_stats.csv)
+
+### 性能排名 (按 Sharpe 排序)
+
+| 排名 | 因子 | 年化收益(净) | Sharpe | 最大回撤 | 成本拖累 |
+|------|------|-------------|--------|----------|---------|
+"""
+
+        for idx, (_, row) in enumerate(df_performance.iterrows(), 1):
+            md += (
+                f"| {idx} "
+                f"| {row['factor']} "
+                f"| {row['annual_return_net']:.2%} "
+                f"| {row['sharpe']:.4f} "
+                f"| {row['max_drawdown']:.2%} "
+                f"| {row['cost_drag_annual']:.2%} |\n"
+            )
+
+        md += """
+### 关键观察
+
+"""
+
+        # 添加关键观察
+        observations = []
+
+        # 最佳/最差策略对比
+        worst_strategy = df_performance.iloc[-1]
+        observations.append(
+            f"- **性能差异**: 最佳策略 ({best_strategy['factor']}, Sharpe={best_strategy['sharpe']:.4f}) "
+            f"vs 最差策略 ({worst_strategy['factor']}, Sharpe={worst_strategy['sharpe']:.4f}), "
+            f"差距 {best_strategy['sharpe'] - worst_strategy['sharpe']:.4f}"
+        )
+
+        # 成本影响
+        max_cost_drag = df_performance['cost_drag_annual'].min()  # 最大拖累(负值)
+        observations.append(
+            f"- **成本影响最大**: {df_performance.iloc[df_performance['cost_drag_annual'].argmin()]['factor']} "
+            f"成本拖累 {max_cost_drag:.2%}/年"
+        )
+
+        # Drawdown
+        max_dd = df_performance['max_drawdown'].min()  # 最大回撤(负值)
+        observations.append(
+            f"- **最大回撤**: {df_performance.iloc[df_performance['max_drawdown'].argmin()]['factor']} "
+            f"{max_dd:.2%}"
+        )
+
+        for obs in observations:
+            md += f"{obs}\n"
+
+        md += """
+---
+
+## 6.2 多因子对比 (含 Composite)
+
+"""
+
+        if 'Composite' in df_performance['factor'].values:
+            composite_row = df_performance[df_performance['factor'] == 'Composite'].iloc[0]
+            md += f"""
+### Composite 因子表现
+
+- **排名**: {composite_rank}/{len(df_performance)}
+- **年化收益(净)**: {composite_row['annual_return_net']:.2%}
+- **Sharpe**: {composite_row['sharpe']:.4f}
+- **最大回撤**: {composite_row['max_drawdown']:.2%}
+- **换手率**: {composite_row['avg_turnover']:.2%}
+
+### 单因子 vs Composite
+
+| 因子 | Sharpe | Composite Sharpe | 改进 |
+|------|--------|-----------------|------|
+"""
+
+            for _, row in df_performance[df_performance['factor'] != 'Composite'].iterrows():
+                improvement = composite_row['sharpe'] - row['sharpe']
+                md += (
+                    f"| {row['factor']} "
+                    f"| {row['sharpe']:.4f} "
+                    f"| {composite_row['sharpe']:.4f} "
+                    f"| {improvement:+.4f} |\n"
+                )
+
+            md += "\n"
+
+            if composite_row['sharpe'] > best_strategy['sharpe']:
+                md += "**结论**: Composite 因子成功提升了 Sharpe 比率，多因子组合有效。\n\n"
+            else:
+                md += "**结论**: Composite 因子未能超越最佳单因子，建议优化合成方法或仅使用表现最好的因子。\n\n"
+        else:
+            md += "未包含 Composite 因子。\n\n"
+
+        md += """
+---
+
+## 6.3 稳健性 (子样本 + 成本敏感性)
+
+详见 [robustness_table.md](robustness_table.md)
+
+### 稳健性评估
+
+"""
+
+        if robustness_results and 'table' in robustness_results:
+            df_rob = robustness_results['table']
+
+            # 子样本稳健性
+            sub_sample_data = df_rob[df_rob['test_type'] == '子样本']
+            if len(sub_sample_data) >= 2:
+                md += "#### 子样本稳健性\n\n"
+                md += "| 时间段 | 年化收益 | Sharpe | 最大回撤 |\n"
+                md += "|--------|---------|--------|----------|\n"
+                for _, row in sub_sample_data.iterrows():
+                    md += (
+                        f"| {row['parameter']} "
+                        f"| {row['annual_return']:.2%} "
+                        f"| {row['sharpe']:.4f} "
+                        f"| {row['max_drawdown']:.2%} |\n"
+                    )
+
+                sharpe_diff = sub_sample_data['sharpe'].max() - sub_sample_data['sharpe'].min()
+                md += f"\n**Sharpe 差异**: {sharpe_diff:.4f} ({'稳定' if sharpe_diff < 0.3 else '波动较大'})\n\n"
+
+            # 成本敏感性
+            cost_sens_data = df_rob[df_rob['test_type'] == '成本敏感性']
+            if len(cost_sens_data) > 0:
+                md += "#### 成本敏感性\n\n"
+                md += "| 成本 | 年化收益 | Sharpe | 变化 |\n"
+                md += "|------|---------|--------|------|\n"
+                base_sharpe = cost_sens_data.iloc[0]['sharpe']
+                for idx, (_, row) in enumerate(cost_sens_data.iterrows()):
+                    change = row['sharpe'] - base_sharpe if idx > 0 else 0
+                    change_str = f"{change:+.4f}" if idx > 0 else "基准"
+                    md += (
+                        f"| {row['parameter']} "
+                        f"| {row['annual_return']:.2%} "
+                        f"| {row['sharpe']:.4f} "
+                        f"| {change_str} |\n"
+                    )
+
+                cost_sensitivity = (cost_sens_data.iloc[-1]['annual_return'] -
+                                  cost_sens_data.iloc[0]['annual_return']) / 4  # 假设成本范围40bps
+                md += f"\n**成本敏感性**: 每增加10bps，年化收益下降约 {abs(cost_sensitivity):.2%}\n\n"
+
+        md += """
+---
+
+## 6.4 暴露与结论 (beta/corr)
+
+详见 [exposure_summary.md](exposure_summary.md)
+
+### 市场暴露分析
+
+"""
+
+        if exposure_results and 'full_sample' in exposure_results:
+            md += "| 策略 | Beta | R² | 相关系数 | 评价 |\n"
+            md += "|------|------|-----|---------|------|\n"
+
+            for strategy_name, stats in exposure_results['full_sample'].items():
+                beta = stats['beta']
+                r2 = stats['r_squared']
+                corr = stats['correlation']
+
+                if abs(beta) > 0.1:
+                    rating = "⚠️  超标"
+                elif abs(beta) > 0.05:
+                    rating = "🟡 需关注"
+                else:
+                    rating = "✅ 良好"
+
+                md += (
+                    f"| {strategy_name} "
+                    f"| {beta:.4f} "
+                    f"| {r2:.2%} "
+                    f"| {corr:.4f} "
+                    f"| {rating} |\n"
+                )
+
+            md += "\n**结论**: "
+
+            avg_beta = np.mean([abs(stats['beta']) for stats in exposure_results['full_sample'].values()])
+            if avg_beta < 0.05:
+                md += "策略成功实现市场中性，市场暴露极低。\n\n"
+            elif avg_beta < 0.1:
+                md += "策略基本实现市场中性，少量市场暴露在可接受范围内。\n\n"
+            else:
+                md += "⚠️  策略存在较大市场暴露，需优化中性化逻辑。\n\n"
+
+        md += """
+---
+
+## 改进建议
+
+基于以上分析，提出以下改进建议：
+
+"""
+
+        suggestions = []
+
+        # 1. 成本优化
+        if avg_cost_drag < -0.03:
+            suggestions.append("""1. **降低交易成本**
+   - 当前成本拖累较大，建议降低调仓频率
+   - 考虑增加最小持有期限制
+   - 扩大进出阈值差距以减少频繁交易""")
+
+        # 2. 市场暴露优化
+        if exposure_results and 'full_sample' in exposure_results:
+            high_beta_strategies = [
+                name for name, stats in exposure_results['full_sample'].items()
+                if abs(stats['beta']) > 0.1
+            ]
+            if high_beta_strategies:
+                suggestions.append(f"""2. **优化市场中性化**
+   - 以下策略Beta超标: {', '.join(high_beta_strategies)}
+   - 检查权重归一化逻辑
+   - 考虑添加市场对冲头寸""")
+
+        # 3. Composite 优化
+        if 'Composite' in df_performance['factor'].values:
+            if composite_row['sharpe'] < best_strategy['sharpe']:
+                suggestions.append("""3. **优化因子合成**
+   - 当前等权合成未能提升表现
+   - 建议使用 Sharpe 加权或 IC 加权
+   - 仅合成表现较好的因子""")
+
+        # 4. 稳健性提升
+        if robustness_results and 'table' in robustness_results:
+            sub_sample_data = robustness_results['table'][
+                robustness_results['table']['test_type'] == '子样本'
+            ]
+            if len(sub_sample_data) >= 2:
+                sharpe_std = sub_sample_data['sharpe'].std()
+                if sharpe_std > 0.3:
+                    suggestions.append("""4. **提升稳健性**
+   - 子样本表现差异较大
+   - 考虑增加更多历史数据验证
+   - 探索时变因子权重方法""")
+
+        if not suggestions:
+            suggestions.append("""✅ **当前策略表现优异**
+   - 保持现有配置
+   - 继续监控实盘表现
+   - 定期更新评估报告""")
+
+        for suggestion in suggestions:
+            md += f"{suggestion}\n\n"
+
+        md += """
+---
+
+## 附录：生成文件清单
+
+- `performance_table.csv` / `.md` - 性能表格
+- `drawdown_stats.csv` - Drawdown 统计
+- `exposure_summary.md` - 市场暴露分析
+- `exposure_stats.csv` - 暴露统计数据
+- `robustness_table.csv` / `.md` - 稳健性测试表格
+- `nav_comparison.png` - 净值曲线对比图
+- `ic_timeseries.png` - IC 时间序列图
+- `drawdown_analysis.png` - 回撤曲线图
+- `factor_correlation_heatmap.png` - 因子相关性热图
+- `equity_gross_vs_net.png` - 毛收益 vs 净收益对比图
+
+---
+
+**报告生成时间**: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+*本报告由统一评估器自动生成，所有数字均来自代码运行输出。*
+"""
+
+        return md
+
+
+def main():
+    """主函数"""
+    logger.info("="*100)
+    logger.info("因子回测系统 - 统一评估入口")
+    logger.info("="*100)
+
+    # 1. 加载数据
+    logger.info("\n[0/7] 加载数据...")
+    loader = DataLoader()
+
+    df_clean = loader.load_cleaned_data()
+
+    if df_clean is None:
+        logger.error("数据加载失败，请先运行数据采集脚本")
+        return
+
+    logger.info("✅ 数据加载完成")
+
+    # 2. 初始化评估器
+    evaluator = UnifiedEvaluator(
+        rebalance_freq='2monthly',
+        min_holding_periods=12,
+        entry_quantile=0.25,
+        exit_quantile=0.30,
+        cost_bps=20.0,
+        split_date='2020-01-01'
+    )
+
+    # 3. 运行完整评估
+    results = evaluator.run_full_evaluation(
+        df_clean=df_clean,
+        output_dir='results',
+        factor_names=['Momentum', 'Reversal', 'LowVolatility', 'Trend']
+    )
+
+    logger.info("\n" + "="*100)
+    logger.info("✅ 评估完成！请查看 results/ 目录下的报告和图表")
+    logger.info("="*100)
+
+
+if __name__ == '__main__':
+    main()

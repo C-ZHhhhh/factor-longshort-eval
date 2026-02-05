@@ -1,0 +1,33 @@
+# backtest/
+
+> L2 文档 | 父级: [../CLAUDE.md](../CLAUDE.md) | 分形协议: 三层结构
+
+## 地位
+
+回测引擎层,负责时间对齐、执行回测循环、计算绩效指标。系统核心。✅ 阶段5已完成。
+
+## 边界
+
+**输入**: 因子值、收益率、组合权重
+**输出**: 净值曲线、绩效指标、持仓历史、换手率序列
+
+## 约束
+
+1. **防look-ahead**: 因子在t计算,必须shift(1)后用t+1收益
+2. **交易成本**: cost = turnover × cost_bps / 10000 (默认20 bps)
+3. **时间对齐**: 确保因子和收益的时间索引正确对齐
+4. **净值更新**: nav_t = nav_t-1 × (1 + portfolio_return - transaction_cost)
+
+## 成员清单
+
+**__init__.py**: 包初始化文件。导出TimeAligner, TransactionCostModel, BacktestEngine, PerformanceMetrics。
+
+**time_aligner.py**: 时间对齐模块(⭐ CRITICAL)。实现align_factor_and_return()和align_weights_and_return(),通过shift(1)防止look-ahead bias。确保因子t预测收益t+1。
+
+**engine.py**: 回测引擎(⭐ CRITICAL)。主回测循环,按月迭代计算组合收益,计算换手率,扣除交易成本,更新净值曲线。输出含/不含成本的两条净值曲线。
+
+**transaction.py**: 交易成本模型。根据换手率计算单边交易成本。cost = turnover × cost_bps / 10000。支持单期、序列、年化成本计算。
+
+**metrics.py**: 绩效指标计算器。计算总收益、年化收益、年化波动、Sharpe、Calmar、Sortino、最大回撤、胜率、盈亏比等指标。
+
+⚡触发器: 一旦本文件夹增删文件或架构逻辑调整,请立即重写此文档。

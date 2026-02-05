@@ -1,0 +1,97 @@
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36mvalidate_all[0m - [1m================================================================================[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36mvalidate_all[0m - [1m开始验收结果[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36mvalidate_all[0m - [1m================================================================================[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m
+[验证1/5] 检查必需文件...[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ performance_table.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ performance_table.md[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ drawdown_stats.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ exposure_stats.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ exposure_summary.md[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ robustness_table.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ robustness_table.md[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ weight_neutrality_stats.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ EVALUATION_REPORT.md[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ nav_comparison.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ ic_timeseries.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ drawdown_analysis.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ factor_correlation_heatmap.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m  ✅ equity_gross_vs_net.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_required_files[0m - [1m
+✅ 验证1通过: 所有必需文件存在[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_performance_table[0m - [1m
+[验证2/5] 验证 Performance Table...[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_performance_table[0m - [1m  ✅ gross >= net (所有因子)[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_performance_table[0m - [1m  ✅ cost_drag_annual <= 0 (所有因子)[0m
+[32m2026-02-04 20:13:49[0m | [31m[1mERROR   [0m | [36m__main__[0m:[36m_validate_performance_table[0m - [31m[1m  ❌ cost_drag 计算不一致[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_performance_table[0m - [1m
+✅ 验证2通过[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_drawdown_independence[0m - [1m
+[验证3/5] 验证 Drawdown 独立性...[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_drawdown_independence[0m - [1m  ✅ 所有因子的 max_drawdown 不同 (5个不同值)[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_drawdown_independence[0m - [1m  ✅ Momentum (-0.206794) vs Reversal (-0.190562) 不同[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_drawdown_independence[0m - [1m
+✅ 验证3通过[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m
+[验证4/5] 验证 IC/IR...[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m  ✅ IC_std > 0 (所有因子)[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m  ✅ ICIR 非 NaN (所有因子)[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m  ✅ 样本数 > 24 (最小: 122)[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m
+  IC/IR 汇总:[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m    Momentum: N=122, IC_mean=-0.004357, IC_std=0.206945, ICIR=-0.021052[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m    Reversal: N=133, IC_mean=0.004356, IC_std=0.169087, ICIR=0.025764[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m    LowVolatility: N=132, IC_mean=0.009487, IC_std=0.248257, ICIR=0.038215[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m    Trend: N=127, IC_mean=0.489416, IC_std=0.169489, ICIR=2.887606[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m    Liquidity: N=132, IC_mean=-0.013792, IC_std=0.096850, ICIR=-0.142406[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_ic_ir[0m - [1m
+✅ 验证4通过[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m
+[验证5/5] 验证权重中性化...[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m  ✅ max(abs(sum_w)) < 1e-06 (所有因子)[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m  ✅ 多空平衡 (sum_pos≈1, sum_neg≈1)[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m
+  权重中性化汇总:[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m    Momentum: max(abs(sum_w))=0.0000000000, mean(sum_pos)=1.000000, mean(sum_neg)=1.000000[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m    Reversal: max(abs(sum_w))=0.0000000000, mean(sum_pos)=1.000000, mean(sum_neg)=1.000000[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m    LowVolatility: max(abs(sum_w))=0.0000000000, mean(sum_pos)=1.000000, mean(sum_neg)=1.000000[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m    Trend: max(abs(sum_w))=0.0000000000, mean(sum_pos)=1.000000, mean(sum_neg)=1.000000[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m    Composite: max(abs(sum_w))=0.0000000000, mean(sum_pos)=1.000000, mean(sum_neg)=1.000000[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_validate_weight_neutrality[0m - [1m
+✅ 验证5通过[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m
+================================================================================[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m验收总结[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m================================================================================[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m
+通过项 (23):[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: performance_table.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: performance_table.md[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: drawdown_stats.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: exposure_stats.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: exposure_summary.md[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: robustness_table.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: robustness_table.md[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: weight_neutrality_stats.csv[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: EVALUATION_REPORT.md[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: nav_comparison.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: ic_timeseries.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: drawdown_analysis.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: factor_correlation_heatmap.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ 文件存在: equity_gross_vs_net.png[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ Performance: gross >= net[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ Performance: cost_drag <= 0[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ Drawdown: 所有因子独立[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ Drawdown: Momentum vs Reversal 独立[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ IC: IC_std > 0[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ IC: ICIR 非 NaN[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ IC: 样本数充足[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ Weight: 中性化通过[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m  ✅ Weight: 多空平衡[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m
+失败项 (1):[0m
+[32m2026-02-04 20:13:49[0m | [31m[1mERROR   [0m | [36m__main__[0m:[36m_print_summary[0m - [31m[1m  ❌ Performance: cost_drag 计算错误[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m
+================================================================================[0m
+[32m2026-02-04 20:13:49[0m | [31m[1mERROR   [0m | [36m__main__[0m:[36m_print_summary[0m - [31m[1m💥 验收结果: FAIL (1 个问题)[0m
+[32m2026-02-04 20:13:49[0m | [1mINFO    [0m | [36m__main__[0m:[36m_print_summary[0m - [1m================================================================================[0m
