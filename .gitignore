@@ -22,7 +22,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 
-# 虚拟环境
+# Virtual Environment
 venv/
 ENV/
 env/
@@ -36,28 +36,58 @@ env/
 *~
 .DS_Store
 
-# 数据文件
+# Logs and temporary outputs
+*.log
+validation_output_*.txt
+
+# Data files (cache only, allow CSV tables in results/)
 data/cache/
-*.csv
 *.h5
 *.hdf5
 *.parquet
-
-# 结果文件
-results/
-logs/
-
-# 环境变量
-.env
 
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
 
-# 测试
+# Test
 .pytest_cache/
 .coverage
 htmlcov/
 
 # uv
 .python-version
+
+# Environment
+.env
+
+# =============================================================================
+# Results Directory - Whitelist Strategy
+# =============================================================================
+# Default: Ignore everything in results/
+results/**
+
+# Whitelist: Core deliverable files
+!results/EVALUATION_REPORT.md
+!results/performance_table.csv
+!results/performance_table.md
+!results/robustness_table.csv
+!results/robustness_table.md
+!results/exposure_summary.md
+!results/significance_summary.md
+!results/cagr_diagnostics.md
+
+# Whitelist: Core figures directory and README
+!results/figures/
+!results/figures/README.md
+
+# Whitelist: Only fig_01 to fig_06 (交付版图表)
+!results/figures/fig_01_*.png
+!results/figures/fig_02_*.png
+!results/figures/fig_03_*.png
+!results/figures/fig_04_*.png
+!results/figures/fig_05_*.png
+!results/figures/fig_06_*.png
+
+# Explicitly ignore archive and all other files in figures/
+results/figures/archive/

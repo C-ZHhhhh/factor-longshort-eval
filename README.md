@@ -213,3 +213,66 @@
 
 * Performance summary：年化收益/波动/Sharpe/MaxDD/换手
 * Robustness table：不同成本/子样本/分位数下的对比
+
+# 9) Key Results（关键结果）
+
+## 9.1 Momentum因子表现总览
+
+基于S&P 500样本（2016-2026, 121个月），月度调仓，20bps交易成本：
+
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| **年化收益(净)** | **0.19%** | 扣除20bps成本后 |
+| **Sharpe Ratio** | **0.1153** | 风险调整后收益 |
+| **最大回撤** | **-20.68%** | 约在2019-2020期间 |
+| **年化波动** | **9.50%** | 月度波动年化 |
+| **平均换手率** | **17.91%** | 月度调仓换手 |
+| **成本拖累** | **-0.41%/年** | 交易成本影响 |
+
+**统计显著性**: Newey-West t-stat = 0.36, p = 0.719（**不显著**）
+
+**结论**: Momentum因子实现小幅正收益，但缺乏统计显著性，不构成稳定超额收益的强证据。
+
+---
+
+## 9.2 核心可视化结果
+
+### 毛收益 vs 净收益对比
+
+![Momentum Equity Curve](results/figures/fig_01_equity_gross_vs_net_momentum.png)
+
+**关键发现**: 交易成本消耗约67.8%的毛收益，严重拖累最终表现。
+
+---
+
+### 成本敏感性分析
+
+![Cost Sensitivity](results/figures/fig_03_cost_sensitivity_momentum.png)
+
+**关键发现**:
+- 基准点（20bps）：年化收益0.19%
+- 临界点（30bps）：年化收益转负（-0.01%）
+- **结论**: 策略对交易成本高度敏感，实盘需严控成本
+
+---
+
+### 市场暴露：Alpha & Beta
+
+![Exposure Analysis](results/figures/fig_05_exposure_alpha_beta.png)
+
+**关键发现**:
+- **Momentum Beta = 0.1862**（超过0.1阈值），收益中约10%为市场暴露
+- **Momentum Alpha = -0.0018**（接近零），扣除市场影响后纯因子收益不显著
+- **改进方向**: 需实施Beta-Neutral中性化
+
+---
+
+## 9.3 完整报告
+
+详细分析请参阅：
+- [Results Snapshot](docs/03_results_snapshot.md) - 快照报告（1表+3图）
+- [Evaluation Report](results/EVALUATION_REPORT.md) - 综合评估报告
+- [CAGR Diagnostics](results/cagr_diagnostics.md) - 年化收益计算验证
+- [All Figures](results/figures/) - 完整图表集
+
+---
