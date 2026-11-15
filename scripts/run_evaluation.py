@@ -8,11 +8,13 @@
 4. 市场暴露分析 (exposure_summary.md)
 5. 稳健性测试表格 (robustness_table.csv + .md)
 6. 综合评估报告 (EVALUATION_REPORT.md)
+7. 网页版报告 (report.html, 单文件, 浏览器直接打开)
 
 使用方法:
     python scripts/run_evaluation.py
 """
 
+import json
 import sys
 from pathlib import Path
 import pandas as pd
@@ -29,6 +31,7 @@ from evaluation.market_exposure_analyzer import MarketExposureAnalyzer
 from evaluation.robustness import RobustnessTest
 from evaluation import report_narrative
 from visualization.factor_visualizer import FactorVisualizer
+from visualization import html_report
 from utils.logger import get_logger
 from utils.config import config
 
@@ -335,6 +338,23 @@ class UnifiedEvaluator:
             f.write(evaluation_report)
         logger.info(f"✅ 综合评估报告已保存: {report_file}")
 
+        # ===== 网页版报告 =====
+        # 用和上面完全相同的结果生成 results/report.html (单文件, 浏览器直接打开)
+        with open(output_path / 'metadata.json', 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+        report_data = html_report.build_report_data(
+            backtest_results=backtest_results,
+            df_performance=df_performance,
+            significance_results=significance_results,
+            exposure_full_sample=exposure_results['full_sample'],
+            df_robustness=robustness_results['table'],
+            ic_results=ic_results,
+            metadata=metadata,
+            benchmark_name=benchmark_name
+        )
+        html_report_file = html_report.write_report(report_data, output_dir)
+        logger.info(f"✅ 网页版报告已保存: {html_report_file}")
+
         # 生成 IC Sanity Check 报告
         if 'ic_sanity_checks' in locals():
             ic_sanity_md = self._create_ic_sanity_check_report(ic_sanity_checks)
@@ -366,6 +386,7 @@ class UnifiedEvaluator:
         logger.info(f"     - robustness_table.csv/.md")
         logger.info(f"     - significance_summary.md")
         logger.info(f"     - EVALUATION_REPORT.md")
+        logger.info(f"     - report.html (网页版报告)")
         logger.info(f"     - metadata.json")
         logger.info(f"     - 各类可视化图表 (PNG)")
         logger.info("="*100)

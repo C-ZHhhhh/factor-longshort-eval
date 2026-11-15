@@ -1,0 +1,851 @@
+<!doctype html>
+<!--
+  网页报告模板 (由 visualization/html_report.py 填入数据)
+
+  [INPUT]:  下方 report-data 脚本标签里的 JSON (build_report_data 的返回值, 由 render_html 填入)
+  [OUTPUT]: 单文件网页, 不依赖任何外部资源, 离线可看
+  [POS]:    只负责排版和画图。这里不写任何结果数字, 也不做任何结论判断:
+            页面上的文字和数字全部来自 JSON。
+  [PROTOCOL]: 改了 JSON 的字段名要同时改 html_report.py; 更新后检查 visualization/CLAUDE.md
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S&P 500 因子回测报告</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --wash: rgba(11, 11, 11, 0.05);
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --critical: #d03b3b;
+    --good: #0ca30c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --wash: rgba(255, 255, 255, 0.06);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --series-4: #c98500;
+      --series-5: #d55181;
+      --series-6: #0ca30c;
+      --critical: #d03b3b;
+      --good: #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --wash: rgba(255, 255, 255, 0.06);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #0ca30c;
+    --critical: #d03b3b;
+    --good: #0ca30c;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  main {
+    max-width: 980px; margin: 0 auto; padding-block: 32px 56px;
+    /* 两侧至少留 16px, 手机横屏时再让出系统栏的位置 */
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; font-weight: 650; }
+  h2 { font-size: 18px; margin: 0 0 4px; font-weight: 650; }
+  h3 { font-size: 14px; margin: 0 0 8px; font-weight: 600; color: var(--text-secondary); }
+  p { margin: 0 0 10px; }
+  .sub { color: var(--text-secondary); font-size: 14px; margin: 0; }
+  .lead { color: var(--text-secondary); font-size: 14px; margin: 0 0 14px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 16px;
+  }
+  .verdict { border-left: 4px solid var(--text-primary); }
+  .verdict h2 { font-size: 20px; margin-bottom: 10px; }
+  ul.points { margin: 0; padding-left: 20px; color: var(--text-secondary); }
+  ul.points li { margin: 4px 0; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-top: 16px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .tile .label { font-size: 13px; color: var(--text-secondary); }
+  .tile .value { font-size: 24px; font-weight: 650; line-height: 1.3; margin: 2px 0; }
+  .tile .note { font-size: 12px; color: var(--text-muted); }
+
+  .controls { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; flex-wrap: wrap; }
+  .controls .hint { font-size: 13px; color: var(--text-secondary); }
+  .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .segmented button {
+    font: inherit; font-size: 13px; padding: 5px 12px; border: 0; background: transparent;
+    color: var(--text-secondary); cursor: pointer;
+  }
+  .segmented button + button { border-left: 1px solid var(--border); }
+  .segmented button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface); }
+  .segmented button:focus-visible, .legend button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+
+  figure { margin: 0 0 22px; }
+  figure:last-child { margin-bottom: 0; }
+  figcaption { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+  .figure-note { font-size: 13px; color: var(--text-secondary); margin: 0 0 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0 0 6px; }
+  .legend button {
+    font: inherit; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;
+    border: 0; background: transparent; color: var(--text-primary); padding: 3px 8px; border-radius: 6px; cursor: pointer;
+  }
+  .legend button:hover { background: var(--wash); }
+  .legend button[aria-pressed="false"] { color: var(--text-muted); }
+  .legend button[aria-pressed="false"] .key { opacity: 0.25; }
+  .legend .key { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+
+  .chart { width: 100%; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart .grid { stroke: var(--grid); stroke-width: 1; }
+  .chart .axis { stroke: var(--axis); stroke-width: 1; }
+  .chart .tick { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart .row-label { fill: var(--text-primary); font-size: 13px; }
+  .chart .value {
+    fill: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums;
+    /* 数值压在网格线上时, 用背景色描一圈把线隔开 */
+    paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round;
+  }
+  .chart .threshold { stroke: var(--text-muted); stroke-width: 1; }
+  .chart .threshold-label { fill: var(--text-muted); font-size: 11px; }
+  .chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .dot { stroke: var(--surface); stroke-width: 2; }
+  .chart .crosshair { stroke: var(--axis); stroke-width: 1; }
+  .chart .hit { fill: transparent; cursor: default; }
+  .chart .hit:focus { outline: none; }
+  .chart .hit:focus-visible { stroke: var(--series-1); stroke-width: 2; }
+  .chart .bar { transition: opacity 0.1s; }
+  .chart g.row.active .bar { opacity: 0.75; }
+  .chart g.row.active .row-wash { fill: var(--wash); }
+  .chart .row-wash { fill: transparent; }
+
+  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px 24px; }
+
+  details.table-view { margin-top: 8px; }
+  details.table-view summary { font-size: 13px; color: var(--text-secondary); cursor: pointer; width: fit-content; }
+  .table-scroll { overflow: auto; max-height: 340px; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { position: sticky; top: 0; background: var(--surface); color: var(--text-secondary); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .flag { color: var(--text-secondary); }
+
+  .tooltip {
+    position: fixed; z-index: 10; pointer-events: none; display: none;
+    background: var(--surface); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14); font-size: 12px; max-width: 280px;
+  }
+  .tooltip .title { color: var(--text-secondary); margin-bottom: 4px; }
+  .tooltip .tip-row { display: flex; align-items: center; gap: 8px; }
+  .tooltip .tip-row .key { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+  .tooltip .tip-row .val { font-weight: 650; font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
+  .tooltip .tip-row .name { color: var(--text-secondary); }
+
+  footer { margin-top: 24px; font-size: 12px; color: var(--text-muted); }
+  footer code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>S&amp;P 500 因子回测报告</h1>
+    <p class="sub" id="subtitle"></p>
+  </header>
+
+  <section class="card verdict" aria-labelledby="verdict-title">
+    <h2 id="verdict-title"></h2>
+    <ul class="points" id="verdict-points"></ul>
+  </section>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card" aria-labelledby="nav-title">
+    <h2 id="nav-title">净值与回撤</h2>
+    <p class="lead">每个策略都从 1.0 出发。净值低于 1.0 表示到那时为止是亏的。</p>
+    <div class="controls">
+      <span class="hint">收益口径</span>
+      <div class="segmented" role="group" aria-label="收益口径" id="mode-toggle">
+        <button type="button" data-mode="net" aria-pressed="true">扣除成本</button>
+        <button type="button" data-mode="gross" aria-pressed="false">不扣成本</button>
+      </div>
+      <span class="hint" id="mode-hint"></span>
+    </div>
+    <figure>
+      <figcaption>净值曲线</figcaption>
+      <p class="figure-note">点图例可以隐藏或显示某个策略。</p>
+      <div class="legend" id="nav-legend"></div>
+      <div class="chart" id="nav-chart"></div>
+      <div id="nav-table"></div>
+    </figure>
+    <figure>
+      <figcaption>回撤曲线</figcaption>
+      <p class="figure-note">当前净值比此前最高点低了多少。0 表示处在最高点。</p>
+      <div class="chart" id="dd-chart"></div>
+      <div id="dd-table"></div>
+    </figure>
+  </section>
+
+  <section class="card" aria-labelledby="perf-title">
+    <h2 id="perf-title">各策略对比</h2>
+    <p class="lead">年化净收益，已扣除交易成本。</p>
+    <figure>
+      <div class="chart" id="perf-chart"></div>
+    </figure>
+    <div class="table-scroll" style="max-height:none">
+      <table id="perf-table"></table>
+    </div>
+    <p class="figure-note" id="perf-note" style="margin-top:10px"></p>
+  </section>
+
+  <section class="card" aria-labelledby="robust-title">
+    <h2 id="robust-title">稳健性</h2>
+    <p class="lead" id="robust-lead"></p>
+    <div class="panels">
+      <figure>
+        <figcaption>换时间段</figcaption>
+        <p class="figure-note">子样本的年化净收益</p>
+        <div class="chart" id="robust-sub"></div>
+      </figure>
+      <figure>
+        <figcaption>换交易成本</figcaption>
+        <p class="figure-note">不同成本下的年化净收益</p>
+        <div class="chart" id="robust-cost"></div>
+      </figure>
+      <figure>
+        <figcaption>换选股比例</figcaption>
+        <p class="figure-note">进入 / 退出阈值</p>
+        <div class="chart" id="robust-quantile"></div>
+      </figure>
+    </div>
+    <ul class="points" id="robust-notes" style="margin-top:14px"></ul>
+    <div id="robust-table"></div>
+  </section>
+
+  <section class="card" aria-labelledby="exposure-title">
+    <h2 id="exposure-title">市场暴露</h2>
+    <p class="lead" id="exposure-lead"></p>
+    <figure>
+      <div class="chart" id="exposure-chart"></div>
+    </figure>
+    <ul class="points" id="exposure-notes"></ul>
+    <div id="exposure-table"></div>
+  </section>
+
+  <section class="card" aria-labelledby="limits-title">
+    <h2 id="limits-title">读这份报告时要注意</h2>
+    <ul class="points" id="limitations" style="margin-top:8px"></ul>
+  </section>
+
+  <footer id="footer"></footer>
+</main>
+
+<div class="tooltip" id="tooltip" role="status" aria-live="polite"></div>
+
+<script type="application/json" id="report-data">__REPORT_DATA_JSON__</script>
+<script>
+(function () {
+  'use strict';
+
+  const data = JSON.parse(document.getElementById('report-data').textContent);
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const $ = (id) => document.getElementById(id);
+
+  // ---------- 小工具 ----------
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+  function svg(tag, attrs) {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const key in attrs || {}) node.setAttribute(key, attrs[key]);
+    return node;
+  }
+  function svgText(text, attrs) {
+    const node = svg('text', attrs);
+    node.textContent = text;
+    return node;
+  }
+  const pct = (v, digits) => (v == null ? '—' : (v * 100).toFixed(digits == null ? 2 : digits) + '%');
+  const num = (v, digits) => (v == null ? '—' : v.toFixed(digits == null ? 2 : digits));
+  const seriesColor = (slot) => 'var(--series-' + slot + ')';
+  const monthIndex = (ym) => Number(ym.slice(0, 4)) * 12 + Number(ym.slice(5, 7)) - 1;
+  const monthLabel = (t) => Math.floor(t / 12) + '-' + String((t % 12) + 1).padStart(2, '0');
+
+  function niceTicks(min, max, count) {
+    if (min === max) { min -= 1; max += 1; }
+    const rawStep = (max - min) / Math.max(1, count);
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const residual = rawStep / magnitude;
+    const step = (residual > 5 ? 10 : residual > 2 ? 5 : residual > 1 ? 2 : 1) * magnitude;
+    const start = Math.floor(min / step) * step;
+    const end = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let v = start; v <= end + step * 1e-9; v += step) ticks.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+    return ticks;
+  }
+
+  function fillList(id, items) {
+    const list = $(id);
+    items.forEach((text) => list.appendChild(el('li', null, text)));
+  }
+
+  // 宽度变了才重画 (避免重画改变高度后又触发自己)
+  function onWidthChange(host, render) {
+    let lastWidth = -1;
+    const check = () => {
+      const width = host.clientWidth;
+      if (width > 0 && width !== lastWidth) { lastWidth = width; render(); }
+    };
+    if (window.ResizeObserver) new ResizeObserver(check).observe(host);
+    window.addEventListener('resize', check);
+    check();
+  }
+
+  // ---------- 提示框 ----------
+  const tooltip = $('tooltip');
+  function showTooltip(title, rows, clientX, clientY) {
+    tooltip.textContent = '';
+    if (title) tooltip.appendChild(el('div', 'title', title));
+    rows.forEach((row) => {
+      const line = el('div', 'tip-row');
+      if (row.slot) {
+        const key = el('span', 'key');
+        key.style.background = seriesColor(row.slot);
+        line.appendChild(key);
+      }
+      line.appendChild(el('span', 'val', row.value));
+      line.appendChild(el('span', 'name', row.name));
+      tooltip.appendChild(line);
+    });
+    tooltip.style.display = 'block';
+    const box = tooltip.getBoundingClientRect();
+    let left = clientX + 14;
+    let top = clientY + 14;
+    if (left + box.width > window.innerWidth - 8) left = clientX - box.width - 14;
+    if (top + box.height > window.innerHeight - 8) top = clientY - box.height - 14;
+    tooltip.style.left = Math.max(8, left) + 'px';
+    tooltip.style.top = Math.max(8, top) + 'px';
+  }
+  function hideTooltip() { tooltip.style.display = 'none'; }
+
+  // ---------- 数据表 (每张图的无障碍等价物) ----------
+  function tableView(host, summaryText, columns, rows) {
+    const details = el('details', 'table-view');
+    details.appendChild(el('summary', null, summaryText));
+    const scroll = el('div', 'table-scroll');
+    const table = el('table');
+    buildTable(table, columns, rows);
+    scroll.appendChild(table);
+    details.appendChild(scroll);
+    host.appendChild(details);
+  }
+  function buildTable(table, columns, rows) {
+    const head = el('tr');
+    columns.forEach((column) => head.appendChild(el('th', null, column)));
+    const thead = el('thead');
+    thead.appendChild(head);
+    table.appendChild(thead);
+    const body = el('tbody');
+    rows.forEach((cells) => {
+      const tr = el('tr');
+      cells.forEach((cell) => {
+        const td = el('td');
+        if (cell && typeof cell === 'object') {
+          const swatch = el('span', 'swatch');
+          swatch.style.background = seriesColor(cell.slot);
+          td.appendChild(swatch);
+          td.appendChild(document.createTextNode(cell.text));
+        } else {
+          td.textContent = cell;
+        }
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+  }
+
+  // ---------- 折线图 ----------
+  // options: { series: [{key,label,slot}], points(series) -> [{t,v}], format(v), reference, ariaLabel, hidden:Set }
+  function lineChart(host, options) {
+    function render() {
+      host.textContent = '';
+      const width = host.clientWidth || 720;
+      const height = 300;
+      const margin = { left: 52, right: 16, top: 12, bottom: 28 };
+      const plotW = width - margin.left - margin.right;
+      const plotH = height - margin.top - margin.bottom;
+
+      const all = options.series.map((s) => ({ meta: s, points: options.points(s) }));
+      const visible = all.filter((s) => !options.hidden.has(s.meta.key));
+      const scaled = visible.length ? visible : all;
+
+      let tMin = Infinity, tMax = -Infinity;
+      all.forEach((s) => s.points.forEach((p) => { tMin = Math.min(tMin, p.t); tMax = Math.max(tMax, p.t); }));
+      let vMin = options.reference, vMax = options.reference;
+      scaled.forEach((s) => s.points.forEach((p) => { vMin = Math.min(vMin, p.v); vMax = Math.max(vMax, p.v); }));
+      const ticks = niceTicks(vMin, vMax, 5);
+      const yMin = ticks[0], yMax = ticks[ticks.length - 1];
+      const x = (t) => margin.left + ((t - tMin) / (tMax - tMin)) * plotW;
+      const y = (v) => margin.top + (1 - (v - yMin) / (yMax - yMin)) * plotH;
+
+      const root = svg('svg', { viewBox: '0 0 ' + width + ' ' + height, height: height });
+
+      ticks.forEach((tick) => {
+        const isReference = Math.abs(tick - options.reference) < 1e-9;
+        root.appendChild(svg('line', {
+          x1: margin.left, x2: width - margin.right, y1: y(tick), y2: y(tick),
+          class: isReference ? 'axis' : 'grid',
+        }));
+        root.appendChild(svgText(options.format(tick), {
+          x: margin.left - 8, y: y(tick) + 4, 'text-anchor': 'end', class: 'tick',
+        }));
+      });
+
+      // 横轴: 每隔若干年标一个年份
+      const pxPerYear = (plotW / (tMax - tMin)) * 12;
+      const yearStep = Math.max(1, Math.ceil(56 / pxPerYear));
+      const firstYear = Math.ceil(tMin / 12);
+      for (let year = firstYear; year * 12 <= tMax; year += yearStep) {
+        root.appendChild(svgText(String(year), {
+          x: x(year * 12), y: height - 8, 'text-anchor': 'middle', class: 'tick',
+        }));
+      }
+
+      visible.forEach((s) => {
+        const d = s.points.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ',' + y(p.v).toFixed(1)).join('');
+        root.appendChild(svg('path', { d: d, class: 'line', stroke: seriesColor(s.meta.slot) }));
+        const last = s.points[s.points.length - 1];
+        root.appendChild(svg('circle', {
+          cx: x(last.t), cy: y(last.v), r: 4, class: 'dot', fill: seriesColor(s.meta.slot),
+        }));
+      });
+
+      // 悬停层: 十字线 + 各序列在该月的点
+      const crosshair = svg('line', { y1: margin.top, y2: margin.top + plotH, class: 'crosshair', visibility: 'hidden' });
+      root.appendChild(crosshair);
+      const hoverDots = visible.map((s) => {
+        const dot = svg('circle', { r: 4, class: 'dot', fill: seriesColor(s.meta.slot), visibility: 'hidden' });
+        root.appendChild(dot);
+        return dot;
+      });
+      const lookups = visible.map((s) => new Map(s.points.map((p) => [p.t, p.v])));
+
+      const hit = svg('rect', {
+        x: margin.left, y: margin.top, width: plotW, height: plotH, class: 'hit',
+        tabindex: 0, role: 'img', 'aria-label': options.ariaLabel,
+      });
+      root.appendChild(hit);
+
+      let current = null;
+      function update(t, clientX, clientY) {
+        current = Math.max(tMin, Math.min(tMax, t));
+        const cx = x(current);
+        crosshair.setAttribute('x1', cx);
+        crosshair.setAttribute('x2', cx);
+        crosshair.setAttribute('visibility', 'visible');
+        const rows = [];
+        visible.forEach((s, i) => {
+          const value = lookups[i].get(current);
+          if (value == null) { hoverDots[i].setAttribute('visibility', 'hidden'); return; }
+          hoverDots[i].setAttribute('cx', cx);
+          hoverDots[i].setAttribute('cy', y(value));
+          hoverDots[i].setAttribute('visibility', 'visible');
+          rows.push({ slot: s.meta.slot, value: options.format(value), name: s.meta.label, sort: value });
+        });
+        rows.sort((a, b) => b.sort - a.sort);
+        if (clientX == null) {
+          const box = root.getBoundingClientRect();
+          clientX = box.left + (cx / width) * box.width;
+          clientY = box.top + margin.top + 8;
+        }
+        showTooltip(monthLabel(current), rows, clientX, clientY);
+      }
+      function clear() {
+        current = null;
+        crosshair.setAttribute('visibility', 'hidden');
+        hoverDots.forEach((dot) => dot.setAttribute('visibility', 'hidden'));
+        hideTooltip();
+      }
+      hit.addEventListener('pointermove', (event) => {
+        const box = root.getBoundingClientRect();
+        const px = ((event.clientX - box.left) / box.width) * width;
+        update(Math.round(tMin + ((px - margin.left) / plotW) * (tMax - tMin)), event.clientX, event.clientY);
+      });
+      hit.addEventListener('pointerleave', clear);
+      hit.addEventListener('focus', () => update(tMax));
+      hit.addEventListener('blur', clear);
+      hit.addEventListener('keydown', (event) => {
+        const step = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+        if (!step) return;
+        event.preventDefault();
+        update((current == null ? tMax : current) + step);
+      });
+
+      host.appendChild(root);
+    }
+    onWidthChange(host, render);
+    return { render: render };
+  }
+
+  // ---------- 横向条形图 ----------
+  // options: { rows: [{label, value, slot, tip:[{name,value}]}], format(v), domain:[min,max], thresholds:[{value,label}], labelWidth, ariaLabel }
+  function barChart(host, options) {
+    function render() {
+      host.textContent = '';
+      const width = host.clientWidth || 720;
+      const rowH = 34;
+      const barH = 16;
+      // 窄屏时标签列让出一些宽度给条形
+      const labelW = Math.min(options.labelWidth || 112, Math.max(84, width * 0.36));
+      const valuePad = 58;
+      const top = options.thresholds && options.thresholds.length ? 20 : 6;
+      const bottom = 26;
+      const height = top + options.rows.length * rowH + bottom;
+
+      let dMin = 0, dMax = 0;
+      const values = options.rows.map((r) => r.value).concat(options.domain || []);
+      (options.thresholds || []).forEach((t) => values.push(t.value));
+      values.forEach((v) => { dMin = Math.min(dMin, v); dMax = Math.max(dMax, v); });
+      const ticks = niceTicks(dMin, dMax, width < 420 ? 2 : 4);
+      dMin = Math.min(dMin, ticks[0]);
+      dMax = Math.max(dMax, ticks[ticks.length - 1]);
+
+      const x0 = labelW + (dMin < 0 ? valuePad : 8);
+      const x1 = width - (dMax > 0 ? valuePad : 10);
+      const x = (v) => x0 + ((v - dMin) / (dMax - dMin)) * (x1 - x0);
+
+      const root = svg('svg', { viewBox: '0 0 ' + width + ' ' + height, height: height, role: 'img', 'aria-label': options.ariaLabel });
+
+      ticks.forEach((tick) => {
+        if (tick < dMin - 1e-12 || tick > dMax + 1e-12) return;
+        root.appendChild(svg('line', {
+          x1: x(tick), x2: x(tick), y1: top, y2: height - bottom, class: tick === 0 ? 'axis' : 'grid',
+        }));
+        root.appendChild(svgText(options.format(tick, true), {
+          x: x(tick), y: height - 8, 'text-anchor': 'middle', class: 'tick',
+        }));
+      });
+      (options.thresholds || []).forEach((threshold) => {
+        root.appendChild(svg('line', {
+          x1: x(threshold.value), x2: x(threshold.value), y1: top - 4, y2: height - bottom, class: 'threshold',
+        }));
+        root.appendChild(svgText(threshold.label, {
+          x: x(threshold.value), y: top - 8, 'text-anchor': 'middle', class: 'threshold-label',
+        }));
+      });
+
+      options.rows.forEach((row, i) => {
+        const group = svg('g', { class: 'row' });
+        const rowTop = top + i * rowH;
+        const barTop = rowTop + (rowH - barH) / 2;
+        group.appendChild(svg('rect', { x: 0, y: rowTop, width: width, height: rowH, class: 'row-wash', rx: 4 }));
+        group.appendChild(svgText(row.label, {
+          x: labelW - 10, y: rowTop + rowH / 2 + 4, 'text-anchor': 'end', class: 'row-label',
+        }));
+
+        const base = x(0);
+        const end = x(row.value);
+        const radius = Math.min(4, Math.abs(end - base));
+        const direction = end >= base ? 1 : -1;
+        // 数据端 4px 圆角, 基线端直角
+        const d = 'M' + base + ',' + barTop
+          + 'L' + (end - direction * radius) + ',' + barTop
+          + 'Q' + end + ',' + barTop + ' ' + end + ',' + (barTop + radius)
+          + 'L' + end + ',' + (barTop + barH - radius)
+          + 'Q' + end + ',' + (barTop + barH) + ' ' + (end - direction * radius) + ',' + (barTop + barH)
+          + 'L' + base + ',' + (barTop + barH) + 'Z';
+        group.appendChild(svg('path', { d: d, class: 'bar', fill: seriesColor(row.slot) }));
+        group.appendChild(svgText(options.format(row.value), {
+          x: end + direction * 6, y: rowTop + rowH / 2 + 4,
+          'text-anchor': direction > 0 ? 'start' : 'end', class: 'value',
+        }));
+
+        const hit = svg('rect', {
+          x: 0, y: rowTop, width: width, height: rowH, class: 'hit', tabindex: 0,
+          'aria-label': row.label + ' ' + options.format(row.value),
+        });
+        const tipRows = row.tip.map((t) => ({ value: t.value, name: t.name }));
+        hit.addEventListener('pointermove', (event) => {
+          group.classList.add('active');
+          showTooltip(row.label, tipRows, event.clientX, event.clientY);
+        });
+        hit.addEventListener('pointerleave', () => { group.classList.remove('active'); hideTooltip(); });
+        hit.addEventListener('focus', () => {
+          group.classList.add('active');
+          const box = hit.getBoundingClientRect();
+          showTooltip(row.label, tipRows, box.left + box.width / 2, box.bottom - 6);
+        });
+        hit.addEventListener('blur', () => { group.classList.remove('active'); hideTooltip(); });
+        group.appendChild(hit);
+        root.appendChild(group);
+      });
+
+      host.appendChild(root);
+    }
+    onWidthChange(host, render);
+    return { render: render };
+  }
+
+  // ======================================================================
+  // 页面内容
+  // ======================================================================
+  const meta = data.meta;
+  const config = meta.config || {};
+  const strategies = data.strategies;
+
+  // ---------- 标题区 ----------
+  $('subtitle').textContent =
+    '美股 S&P 500 成分股 · 多空资金中性 · ' + meta.sample_start.slice(0, 7) + ' ~ ' + meta.sample_end.slice(0, 7)
+    + '（' + meta.n_months + ' 个月）';
+  $('verdict-title').textContent = data.verdict.title;
+  fillList('verdict-points', data.verdict.points);
+
+  data.tiles.forEach((tile) => {
+    const node = el('div', 'tile');
+    node.appendChild(el('div', 'label', tile.label));
+    node.appendChild(el('div', 'value', tile.value));
+    node.appendChild(el('div', 'note', tile.note));
+    $('tiles').appendChild(node);
+  });
+
+  // ---------- 净值与回撤 ----------
+  let mode = 'net';
+  const hidden = new Set();
+  const seriesMeta = strategies.map((s) => ({ key: s.key, label: s.label, slot: s.slot }));
+  const byKey = {};
+  strategies.forEach((s) => { byKey[s.key] = s; });
+  const pointsOf = (field) => (meta_) => {
+    const series = byKey[meta_.key].series;
+    const values = series[field + '_' + mode];
+    return series.dates.map((date, i) => ({ t: monthIndex(date), v: values[i] })).filter((p) => p.v != null);
+  };
+
+  const navChart = lineChart($('nav-chart'), {
+    series: seriesMeta, points: pointsOf('nav'), format: (v) => num(v, 2), reference: 1,
+    ariaLabel: '各策略净值曲线，用左右方向键逐月查看', hidden: hidden,
+  });
+  const ddChart = lineChart($('dd-chart'), {
+    series: seriesMeta, points: pointsOf('drawdown'), format: (v) => pct(v, 0), reference: 0,
+    ariaLabel: '各策略回撤曲线，用左右方向键逐月查看', hidden: hidden,
+  });
+
+  const legend = $('nav-legend');
+  seriesMeta.forEach((s) => {
+    const button = el('button');
+    button.type = 'button';
+    button.setAttribute('aria-pressed', 'true');
+    const key = el('span', 'key');
+    key.style.background = seriesColor(s.slot);
+    button.appendChild(key);
+    button.appendChild(document.createTextNode(s.label));
+    button.addEventListener('click', () => {
+      const showing = !hidden.has(s.key);
+      if (showing && hidden.size === seriesMeta.length - 1) return;  // 至少留一条
+      if (showing) hidden.add(s.key); else hidden.delete(s.key);
+      button.setAttribute('aria-pressed', String(!showing));
+      navChart.render();
+      ddChart.render();
+    });
+    legend.appendChild(button);
+  });
+
+  const modeHint = () => {
+    $('mode-hint').textContent = mode === 'net'
+      ? '每次调仓按 ' + config.cost_bps + ' bps × 换手率扣成本'
+      : '假设交易不花钱，用来看成本的影响有多大';
+  };
+  modeHint();
+  $('mode-toggle').querySelectorAll('button').forEach((button) => {
+    button.addEventListener('click', () => {
+      mode = button.dataset.mode;
+      $('mode-toggle').querySelectorAll('button').forEach((other) => {
+        other.setAttribute('aria-pressed', String(other === button));
+      });
+      modeHint();
+      navChart.render();
+      ddChart.render();
+    });
+  });
+
+  // 净值和回撤各有一张逐月数据表 (两种成本口径都列出)
+  function monthlyTable(hostId, summaryText, field, format) {
+    const months = new Map();
+    strategies.forEach((s) => {
+      s.series.dates.forEach((date, i) => {
+        if (!months.has(date)) months.set(date, {});
+        months.get(date)[s.key] = [s.series[field + '_net'][i], s.series[field + '_gross'][i]];
+      });
+    });
+    const columns = ['月份'];
+    strategies.forEach((s) => { columns.push(s.label + ' 扣成本'); columns.push(s.label + ' 不扣成本'); });
+    const rows = Array.from(months.keys()).sort().map((date) => {
+      const cells = [date];
+      strategies.forEach((s) => {
+        const pair = months.get(date)[s.key] || [null, null];
+        cells.push(format(pair[0]));
+        cells.push(format(pair[1]));
+      });
+      return cells;
+    });
+    tableView($(hostId), summaryText, columns, rows);
+  }
+  monthlyTable('nav-table', '查看净值数据表', 'nav', (v) => num(v, 4));
+  monthlyTable('dd-table', '查看回撤数据表', 'drawdown', (v) => pct(v, 2));
+
+  // ---------- 各策略对比 ----------
+  barChart($('perf-chart'), {
+    rows: strategies.map((s) => ({
+      label: s.label, value: s.annual_return_net, slot: s.slot,
+      tip: [
+        { name: '年化净收益', value: pct(s.annual_return_net) },
+        { name: '年化毛收益', value: pct(s.annual_return_gross) },
+        { name: 'Sharpe', value: num(s.sharpe) },
+        { name: '最大回撤', value: pct(s.max_drawdown) },
+      ],
+    })),
+    format: (v, isTick) => pct(v, isTick ? 0 : 2),
+    labelWidth: 132,
+    ariaLabel: '各策略年化净收益条形图',
+  });
+  buildTable(
+    $('perf-table'),
+    ['策略', '年化净收益', '年化毛收益', '年化波动', 'Sharpe', '最大回撤', '平均换手率', '显著性 (p 值)'],
+    strategies.map((s) => [
+      { slot: s.slot, text: s.label },
+      pct(s.annual_return_net), pct(s.annual_return_gross), pct(s.annual_vol), num(s.sharpe),
+      pct(s.max_drawdown), pct(s.avg_turnover),
+      s.significance.verdict + ' (' + num(s.significance.nw_p_value, 3) + ')',
+    ])
+  );
+  $('perf-note').textContent =
+    '显著性：对月度净收益做 Newey-West 检验，p 值小于 ' + data.thresholds.significance
+    + ' 才算显著。Sharpe = 月均收益 ÷ 月收益标准差 × √12。';
+
+  // ---------- 稳健性 ----------
+  const robust = data.robustness;
+  $('robust-lead').textContent =
+    '只换一个设定，其余不变，看 ' + robust.factor + ' 的结果会不会变。三张图用同一个横轴刻度，可以直接比长短。';
+  const robustValues = robust.sub_sample.concat(robust.cost, robust.quantile).map((r) => r.annual_return);
+  const robustDomain = [Math.min.apply(null, robustValues.concat([0])), Math.max.apply(null, robustValues.concat([0]))];
+  const robustRows = (rows) => rows.map((r) => ({
+    label: r.label, value: r.annual_return, slot: robust.slot,
+    tip: [
+      { name: '年化净收益', value: pct(r.annual_return) },
+      { name: 'Sharpe', value: num(r.sharpe) },
+      { name: '最大回撤', value: pct(r.max_drawdown) },
+    ],
+  }));
+  [['robust-sub', robust.sub_sample, '子样本'], ['robust-cost', robust.cost, '成本敏感性'], ['robust-quantile', robust.quantile, '分位数敏感性']]
+    .forEach((panel) => {
+      barChart($(panel[0]), {
+        rows: robustRows(panel[1]), format: (v, isTick) => pct(v, isTick ? 0 : 2),
+        domain: robustDomain, labelWidth: 96, ariaLabel: robust.factor + ' ' + panel[2] + '条形图',
+      });
+    });
+  fillList('robust-notes', robust.notes);
+  tableView(
+    $('robust-table'), '查看稳健性数据表', ['测试', '设定', '年化净收益', 'Sharpe', '最大回撤'],
+    [['换时间段', robust.sub_sample], ['换交易成本', robust.cost], ['换选股比例', robust.quantile]]
+      .reduce((rows, group) => rows.concat(group[1].map((r) => [
+        group[0], r.label, pct(r.annual_return), num(r.sharpe), pct(r.max_drawdown),
+      ])), [])
+  );
+
+  // ---------- 市场暴露 ----------
+  const betaThreshold = data.thresholds.beta;
+  $('exposure-lead').textContent =
+    'Beta 表示 ' + meta.benchmark + ' 涨 1% 时策略平均涨跌多少。越接近 0，策略的收益越不受大盘影响；'
+    + '绝对值超过 ' + betaThreshold + ' 记为超标。';
+  barChart($('exposure-chart'), {
+    rows: strategies.map((s) => ({
+      label: s.label, value: s.exposure.beta, slot: s.slot,
+      tip: [
+        { name: 'Beta' + (s.exposure.exceeds ? '（超标）' : ''), value: num(s.exposure.beta) },
+        { name: '月度 Alpha', value: pct(s.exposure.alpha, 3) },
+        { name: 'R²（大盘能解释的比例）', value: pct(s.exposure.r_squared, 1) },
+      ],
+    })),
+    format: (v, isTick) => num(v, isTick ? 1 : 2),
+    thresholds: [{ value: -betaThreshold, label: '-' + betaThreshold }, { value: betaThreshold, label: '+' + betaThreshold }],
+    labelWidth: 132,
+    ariaLabel: '各策略对 ' + meta.benchmark + ' 的 Beta 条形图',
+  });
+  fillList('exposure-notes', data.exposure_notes);
+  tableView(
+    $('exposure-table'), '查看市场暴露数据表', ['策略', 'Beta', '是否超标', '月度 Alpha', 'R²'],
+    strategies.map((s) => [
+      { slot: s.slot, text: s.label }, num(s.exposure.beta, 4), s.exposure.exceeds ? '⚠ 超标' : '✓ 正常',
+      pct(s.exposure.alpha, 3), pct(s.exposure.r_squared, 1),
+    ])
+  );
+
+  // ---------- 局限与页脚 ----------
+  fillList('limitations', data.limitations);
+
+  const footer = $('footer');
+  footer.appendChild(el('div', null,
+    '配置：每 ' + (config.rebalance_freq === '2monthly' ? '2 个月' : config.rebalance_freq) + '调仓 · 最少持有 '
+    + config.min_holding_periods + ' 个月 · 排名前/后 ' + Math.round(config.entry_quantile * 100) + '% 进入、掉出 '
+    + Math.round(config.exit_quantile * 100) + '% 退出 · 成本 ' + config.cost_bps + ' bps'));
+  const generated = el('div', null, '生成时间 ' + meta.generated_at + ' · 代码版本 ');
+  generated.appendChild(el('code', null, String(meta.git_commit || '').slice(0, 7)));
+  generated.appendChild(document.createTextNode(' · 由 scripts/run_evaluation.py 自动生成，所有数字来自实际运行'));
+  footer.appendChild(generated);
+})();
+</script>
+</body>
+</html>

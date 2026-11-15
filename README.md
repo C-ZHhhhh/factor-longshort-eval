@@ -12,12 +12,13 @@
 ```bash
 pip install -r requirements.txt
 python scripts/download_data.py --start 2015-01-01 --end 2026-02-05   # 下载数据到 data/cache/
-python scripts/run_evaluation.py                                      # 生成 results/ 下的表格和报告
+python scripts/run_evaluation.py                                      # 生成 results/ 下的表格、报告和网页版报告
 python scripts/generate_figures.py                                    # 生成 results/figures/ 下的图
 python -m pytest                                                      # 回归测试（不联网、不需要数据）
 ```
 
 - Python ≥ 3.9（第 9 节的结果是在 Python 3.12 下跑出来的）。
+- 跑完后用浏览器打开 `results/report.html` 就能看到带图表的网页版报告（单文件，不联网也能看）。
 - 数据默认只用 yfinance，不需要任何账号。Alpaca 是可选的第二数据源，配置方法见 [docs/ALPACA_SETUP.md](docs/ALPACA_SETUP.md)。
 
 ## 目录结构
@@ -28,7 +29,7 @@ factors/        5 个因子 + 去极值/标准化 + 因子合成
 portfolio/      选股、权重、资金中性
 backtest/       时间对齐、回测循环、交易成本、绩效指标
 evaluation/     IC、显著性检验、市场暴露、稳健性、多因子对比
-visualization/  图表
+visualization/  静态图表、网页版报告
 utils/          配置、日志、日期工具
 scripts/        可以直接运行的入口脚本
 tests/          回归测试
@@ -269,6 +270,7 @@ results/        正式结果（表格、报告、图）
 * `robustness_table`：子样本 / 成本 / 分位数
 * `significance_summary`、`exposure_summary`、`cagr_diagnostics`
 * `EVALUATION_REPORT.md`：综合评估报告
+* `report.html`：网页版报告。净值和回撤曲线、各策略对比、稳健性、市场暴露都在一页里，鼠标悬停可以看具体数值。GitHub 上只能看到源码，需要下载后用浏览器打开
 
 运行脚本还会在 `results/` 下生成净值序列、IC 序列等中间文件，这些没有提交到仓库。
 
@@ -380,6 +382,7 @@ results/        正式结果（表格、报告、图）
 - [Significance](results/significance_summary.md) / [Exposure](results/exposure_summary.md) - 显著性检验和市场暴露
 - [CAGR Diagnostics](results/cagr_diagnostics.md) - 年化收益计算验证
 - [All Figures](results/figures/) - 完整图表集
+- [网页版报告](results/report.html) - 带交互图表的单文件网页（下载后用浏览器打开）
 
 **专题总结**（已按修复后的代码更新）
 - [FINAL_SUMMARY.md](FINAL_SUMMARY.md) - 5 个因子（含流动性）和合成因子的对比
