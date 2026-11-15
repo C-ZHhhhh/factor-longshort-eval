@@ -76,6 +76,7 @@ results/**
 !results/exposure_summary.md
 !results/significance_summary.md
 !results/cagr_diagnostics.md
+!results/report.html
 
 # Whitelist: Core figures directory and README
 !results/figures/
