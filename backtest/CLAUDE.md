@@ -28,6 +28,6 @@
 
 **transaction.py**: 交易成本模型。根据换手率计算单边交易成本。cost = turnover × cost_bps / 10000。支持单期、序列、年化成本计算。
 
-**metrics.py**: 绩效指标计算器。计算总收益、年化收益、年化波动、Sharpe、Calmar、Sortino、最大回撤、胜率、盈亏比等指标。
+**metrics.py**: 绩效指标计算器。计算总收益、年化收益、年化波动、Sharpe、Calmar、Sortino、最大回撤、胜率、盈亏比等指标。总收益/年化收益从收益率序列计算(prod(1+r)-1,期数=len(returns)),不能用nav[-1]/nav[0](nav[0]已含第一期收益,会漏算第一期)。模块级函数drawdown_series()是全系统回撤的唯一算法,历史高点包含初始净值1.0。
 
 ⚡触发器: 一旦本文件夹增删文件或架构逻辑调整,请立即重写此文档。

@@ -204,9 +204,11 @@ class EnhancedReportGenerator(ComprehensiveReportGenerator):
                 df_factor = self._calculate_factor(factor_name, df_clean)
 
                 # IC分析
-                ic_result = self.ic_analyzer.analyze(
+                # factor_t 预测 return_t+1 (lag=1), 不能用同期收益算IC
+                ic_result = self.ic_analyzer.analyze_with_lag(
                     df_factor=df_factor,
-                    df_return=df_clean['monthly_return']
+                    df_return=df_clean['monthly_return'],
+                    lag=1
                 )
 
                 ic_results[factor_name] = ic_result

@@ -16,6 +16,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from utils.logger import get_logger
+from backtest.metrics import drawdown_series
 
 logger = get_logger(__name__)
 
@@ -125,8 +126,9 @@ class FigureGenerator:
         ax.grid(True, alpha=0.3)
 
         # 添加统计信息
-        gross_ret = (nav_gross.iloc[-1] / nav_gross.iloc[0] - 1) * 100
-        net_ret = (nav_net.iloc[-1] / nav_net.iloc[0] - 1) * 100
+        # 回测初始净值为1.0, nav[0]已含第一期收益, 所以总收益 = nav[-1] / 1.0 - 1
+        gross_ret = (nav_gross.iloc[-1] - 1) * 100
+        net_ret = (nav_net.iloc[-1] - 1) * 100
         cost_drag = gross_ret - net_ret
 
         textstr = f'Total Return (Gross): {gross_ret:.2f}%\nTotal Return (Net): {net_ret:.2f}%\nCost Drag: {cost_drag:.2f}%'
@@ -177,8 +179,7 @@ class FigureGenerator:
 
         # 计算回撤
         nav_net = result['nav']
-        cummax = nav_net.cummax()
-        drawdown = (nav_net - cummax) / cummax
+        drawdown = drawdown_series(nav_net)
 
         # 绘图
         fig, ax = plt.subplots(figsize=(12, 6))

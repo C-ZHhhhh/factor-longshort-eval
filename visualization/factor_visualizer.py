@@ -32,6 +32,9 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 import warnings
 import platform
+
+from backtest.metrics import drawdown_series
+
 warnings.filterwarnings('ignore')
 
 # 设置seaborn样式
@@ -307,9 +310,8 @@ class FactorVisualizer:
         for factor_name, result in backtest_results.items():
             nav = result['nav'].copy()  # 复制以确保不影响原数据
 
-            # 计算回撤
-            running_max = nav.cummax()
-            drawdown = (nav - running_max) / running_max
+            # 计算回撤（历史高点包含初始净值）
+            drawdown = drawdown_series(nav)
 
             # 缓存结果
             drawdown_cache[factor_name] = drawdown.copy()

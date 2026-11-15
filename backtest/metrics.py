@@ -3,6 +3,14 @@
 [OUTPUT]: 绩效指标
 [POS]: 绩效指标计算模块
 
+[UPDATE 2026-11-15]:
+- 修复总收益/年化收益漏算第一期: 原实现用 nav[-1]/nav[0]-1, 但回测引擎的nav[0]
+  已经是第一期结束后的净值, 第一期的收益被丢掉而期数仍按len(nav)算。
+- 现在总收益和年化收益统一从收益率序列计算: prod(1+r)-1, 期数=len(returns)。
+  total_return/annual_return/calmar_ratio 的入参相应从nav改为returns。
+- 修复回撤没把初始净值当作高点: 第一期就亏损时, 这段亏损原来不计入回撤。
+  新增模块级函数 drawdown_series(nav, initial_nav), 全系统的回撤都从这里算。
+
 [PROTOCOL]:
 1. 逻辑变更时同步更新此头部
 2. 更新后检查所在文件夹的 CLAUDE.md
@@ -14,6 +22,26 @@ from typing import Dict, Optional
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+INITIAL_NAV = 1.0  # 回测初始净值, 与BacktestEngine的initial_nav默认值一致
+
+
+def drawdown_series(nav: pd.Series, initial_nav: float = INITIAL_NAV) -> pd.Series:
+    """
+    回撤序列: 当前净值相对历史最高净值的跌幅 (<=0)
+
+    历史最高净值要把初始净值算进去。回测引擎的nav[0]是第一期结束后的净值,
+    如果第一期就亏了, 只用nav.cummax()会把nav[0]当成起点, 漏掉这段回撤。
+
+    Args:
+        nav: 净值序列 (第一个值是第一期结束后的净值)
+        initial_nav: 初始净值
+
+    Returns:
+        回撤序列, 与nav同索引
+    """
+    running_peak = nav.cummax().clip(lower=initial_nav)
+    return (nav - running_peak) / running_peak
 
 
 class PerformanceMetrics:
@@ -52,8 +80,8 @@ class PerformanceMetrics:
 
         metrics = {
             # 收益指标
-            'total_return': self.total_return(nav),
-            'annual_return': self.annual_return(nav),
+            'total_return': self.total_return(returns),
+            'annual_return': self.annual_return(returns),
             'monthly_return': returns.mean(),
 
             # 风险指标
@@ -62,7 +90,7 @@ class PerformanceMetrics:
 
             # 风险调整收益
             'sharpe_ratio': self.sharpe_ratio(returns),
-            'calmar_ratio': self.calmar_ratio(nav),
+            'calmar_ratio': self.calmar_ratio(returns, nav),
             'sortino_ratio': self.sortino_ratio(returns),
 
             # 其他统计
@@ -74,14 +102,23 @@ class PerformanceMetrics:
 
         return metrics
 
-    def total_return(self, nav: pd.Series) -> float:
-        """总收益率"""
-        return nav.iloc[-1] / nav.iloc[0] - 1
+    def total_return(self, returns: pd.Series) -> float:
+        """
+        总收益率 = prod(1 + r_t) - 1
 
-    def annual_return(self, nav: pd.Series) -> float:
-        """年化收益率"""
-        total_return = self.total_return(nav)
-        n_periods = len(nav)
+        从收益率序列计算, 包含第一期的收益。
+        （不能用 nav[-1]/nav[0]-1: nav[0]是第一期结束后的净值, 会漏掉第一期）
+        """
+        if len(returns) == 0:
+            return 0.0
+        return float((1 + returns).prod() - 1)
+
+    def annual_return(self, returns: pd.Series) -> float:
+        """年化收益率（几何）: (1 + 总收益) ^ (每年期数 / 期数) - 1"""
+        n_periods = len(returns)
+        if n_periods == 0:
+            return 0.0
+        total_return = self.total_return(returns)
         n_years = n_periods / self.periods_per_year
         annual_return = (1 + total_return) ** (1 / n_years) - 1
         return annual_return
@@ -110,20 +147,19 @@ class PerformanceMetrics:
         """
         最大回撤
 
-        MaxDD = max(1 - nav_t / nav_peak)
+        MaxDD = max(1 - nav_t / nav_peak), nav_peak包含初始净值
         """
-        cummax = nav.cummax()
-        drawdown = (nav - cummax) / cummax
-        max_dd = drawdown.min()
-        return max_dd
+        return drawdown_series(nav).min()
 
-    def calmar_ratio(self, nav: pd.Series) -> float:
+    def calmar_ratio(self, returns: pd.Series, nav: Optional[pd.Series] = None) -> float:
         """
         卡玛比率
 
         Calmar = 年化收益 / |最大回撤|
         """
-        annual_ret = self.annual_return(nav)
+        if nav is None:
+            nav = (1 + returns).cumprod()
+        annual_ret = self.annual_return(returns)
         max_dd = abs(self.max_drawdown(nav))
         if max_dd == 0:
             return 0.0
