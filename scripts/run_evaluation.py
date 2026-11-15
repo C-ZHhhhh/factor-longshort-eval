@@ -554,16 +554,20 @@ class UnifiedEvaluator:
         logger.info("\n分位数敏感性测试结果:")
         df_quant_sens = robustness_result['quantile_sensitivity']
         for _, row in df_quant_sens.iterrows():
-            q_val = row['entry_quantile']
+            # 标签同时写出进入和退出阈值; round 而不是 int, 否则 0.15*100=15.000000000000002 之类会被截错
+            quantile_label = (
+                f"进入{round(row['entry_quantile'] * 100)}% / "
+                f"退出{round(row['exit_quantile'] * 100)}%"
+            )
             robustness_data.append({
                 'test_type': '分位数敏感性',
-                'parameter': f"Q={int(q_val*100)}%",
+                'parameter': quantile_label,
                 'annual_return': row['annual_return'],
                 'sharpe': row['sharpe_ratio'],
                 'max_drawdown': row['max_drawdown'],
                 'turnover': row.get('avg_turnover', np.nan)
             })
-            logger.info(f"  Q={int(q_val*100)}%: Sharpe={row['sharpe_ratio']:.4f}, Return={row['annual_return']:.2%}")
+            logger.info(f"  {quantile_label}: Sharpe={row['sharpe_ratio']:.4f}, Return={row['annual_return']:.2%}")
 
         # 保存稳健性表格
         df_robustness = pd.DataFrame(robustness_data)
@@ -638,8 +642,10 @@ class UnifiedEvaluator:
 
 ## 分位数敏感性测试
 
-| 分位数 | 年化收益 | Sharpe | 最大回撤 | 平均换手率 |
-|--------|---------|--------|----------|-----------|
+进入阈值: 排名进入前/后多少才开仓; 退出阈值: 掉出前/后多少才平仓 (固定为进入阈值 + 5%)。
+
+| 进入 / 退出阈值 | 年化收益 | Sharpe | 最大回撤 | 平均换手率 |
+|----------------|---------|--------|----------|-----------|
 """
 
         quant_sens_df = df_robustness[df_robustness['test_type'] == '分位数敏感性']

@@ -18,6 +18,13 @@
 1. 子样本测试: 至少分2个时间段
 2. 参数敏感性: 测试成本、分位数等关键参数
 3. 结果汇总为对比表
+4. test_parameter_sensitivity 对 param_grid 做的是笛卡尔积(所有取值两两组合)。
+   两个参数需要"成对变化"时(如退出阈值 = 进入阈值 + 5%), 不能把两个列表都塞进
+   param_grid, 要像 test_quantile_sensitivity 那样逐对调用
+
+修复记录:
+- 分位数敏感性原来把进入阈值列表和退出阈值列表一起交给笛卡尔积, 5 个分位数跑出了
+  25 组, 其中还有退出阈值比进入阈值更严的无意义组合。现在逐对运行, 每个分位数一行。
 """
 
 import pandas as pd
@@ -238,10 +245,14 @@ class RobustnessTest:
         self,
         df_factor: pd.DataFrame,
         df_return: pd.DataFrame,
-        quantile_list: List[float] = [0.1, 0.15, 0.2, 0.25, 0.3]
+        quantile_list: List[float] = [0.1, 0.15, 0.2, 0.25, 0.3],
+        exit_buffer: float = 0.05
     ) -> pd.DataFrame:
         """
         分位数敏感性测试
+
+        每个进入阈值只配一个退出阈值(进入阈值 + exit_buffer), 所以结果的行数
+        等于 quantile_list 的长度。
 
         Parameters:
         -----------
@@ -250,22 +261,29 @@ class RobustnessTest:
         df_return : DataFrame
             收益率
         quantile_list : list
-            分位数列表
+            进入阈值列表
+        exit_buffer : float
+            退出阈值比进入阈值宽多少, 默认 0.05 (如 25% 进入 / 30% 退出)
 
         Returns:
         --------
         result_df : DataFrame
-            分位数敏感性结果
+            分位数敏感性结果, 每个进入阈值一行, 含 entry_quantile 和 exit_quantile 两列
         """
-        param_grid = {
-            'cost_bps': [20],
-            'entry_quantile': quantile_list,
-            'exit_quantile': [q + 0.05 for q in quantile_list],  # 退出阈值=进入阈值+5%
-            'min_holding_periods': [12],
-            'rebalance_freq': ['2monthly']
-        }
+        results = []
+        for entry_quantile in quantile_list:
+            # round: 避免 0.1 + 0.05 = 0.15000000000000002 这类浮点尾巴
+            exit_quantile = round(entry_quantile + exit_buffer, 10)
+            param_grid = {
+                'cost_bps': [20],
+                'entry_quantile': [entry_quantile],
+                'exit_quantile': [exit_quantile],
+                'min_holding_periods': [12],
+                'rebalance_freq': ['2monthly']
+            }
+            results.append(self.test_parameter_sensitivity(df_factor, df_return, param_grid))
 
-        return self.test_parameter_sensitivity(df_factor, df_return, param_grid)
+        return pd.concat(results, ignore_index=True)
 
     def analyze_robustness(
         self,
