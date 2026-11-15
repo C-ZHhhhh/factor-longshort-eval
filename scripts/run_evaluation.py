@@ -5,7 +5,7 @@
 1. 性能表格 (performance_table.csv + .md)
 2. Drawdown 统计 (drawdown_stats.csv)
 3. 毛收益 vs 净收益对比图
-4. 市场暴露分析 (exposure_summary.md)
+4. 市场暴露分析 (exposure_summary.md) 和 Beta 对冲前后对比 (beta_hedge_comparison.csv + .md)
 5. 稳健性测试表格 (robustness_table.csv + .md)
 6. 综合评估报告 (EVALUATION_REPORT.md)
 7. 网页版报告 (report.html, 单文件, 浏览器直接打开)
@@ -30,6 +30,8 @@ from evaluation.performance_table_generator import PerformanceTableGenerator
 from evaluation.market_exposure_analyzer import MarketExposureAnalyzer
 from evaluation.robustness import RobustnessTest
 from evaluation import report_narrative
+from evaluation import beta_hedge_comparison
+from evaluation.significance import newey_west_mean_test
 from visualization.factor_visualizer import FactorVisualizer
 from visualization import html_report
 from utils.logger import get_logger
@@ -275,6 +277,19 @@ class UnifiedEvaluator:
             benchmark_name=benchmark_name
         )
 
+        # ===== 第4.5步：Beta 对冲前后对比 =====
+        logger.info("\n" + "="*80)
+        logger.info("[4.5/7] Beta 对冲前后对比")
+        logger.info("="*80)
+
+        df_hedge = self._run_beta_hedge_comparison(
+            df_clean=df_clean,
+            backtest_results=backtest_results,
+            market_returns=market_returns,
+            benchmark_name=benchmark_name,
+            output_dir=output_dir
+        )
+
         # ===== 第5步：稳健性测试 =====
         logger.info("\n" + "="*80)
         logger.info("[5/7] 稳健性测试")
@@ -330,7 +345,8 @@ class UnifiedEvaluator:
             robustness_results=robustness_results,
             ic_results=ic_results,
             significance_results=significance_results,
-            output_dir=output_dir
+            output_dir=output_dir,
+            df_hedge=df_hedge
         )
 
         report_file = output_path / 'EVALUATION_REPORT.md'
@@ -350,7 +366,8 @@ class UnifiedEvaluator:
             df_robustness=robustness_results['table'],
             ic_results=ic_results,
             metadata=metadata,
-            benchmark_name=benchmark_name
+            benchmark_name=benchmark_name,
+            df_hedge=df_hedge
         )
         html_report_file = html_report.write_report(report_data, output_dir)
         logger.info(f"✅ 网页版报告已保存: {html_report_file}")
@@ -383,6 +400,7 @@ class UnifiedEvaluator:
         logger.info(f"     - drawdown_stats.csv")
         logger.info(f"     - exposure_summary.md")
         logger.info(f"     - exposure_stats.csv")
+        logger.info(f"     - beta_hedge_comparison.csv/.md")
         logger.info(f"     - robustness_table.csv/.md")
         logger.info(f"     - significance_summary.md")
         logger.info(f"     - EVALUATION_REPORT.md")
@@ -392,6 +410,50 @@ class UnifiedEvaluator:
         logger.info("="*100)
 
         return results
+
+    def _run_beta_hedge_comparison(
+        self,
+        df_clean: dict,
+        backtest_results: dict,
+        market_returns: pd.Series,
+        benchmark_name: str,
+        output_dir: str
+    ) -> pd.DataFrame:
+        """
+        给每个策略加上市场对冲, 输出对冲前后对比 (beta_hedge_comparison.csv/.md)
+
+        正式结果 (performance_table 等) 仍是未对冲的; 这里是附加的对比分析。
+        """
+        market_daily = df_clean.get('SPY_daily')
+        if market_daily is None or df_clean.get('SPY') is None:
+            # 不悄悄跳过: 缺数据时明确告诉使用者怎么补
+            raise RuntimeError(
+                "缓存里没有 SPY 的日收益率, 无法做 Beta 对冲。"
+                "请先运行: python scripts/download_data.py --add-benchmark-daily "
+                "(只补这一项, 不会重新下载股票数据)"
+            )
+
+        df_hedge, _ = beta_hedge_comparison.compare_hedged(
+            backtest_results=backtest_results,
+            df_return_daily=df_clean['daily_return'],
+            market_return_daily=market_daily,
+            market_return=market_returns,
+            cost_bps=self.cost_bps
+        )
+
+        output_path = Path(output_dir)
+        df_hedge.to_csv(output_path / 'beta_hedge_comparison.csv', index=False, float_format='%.6f')
+        conclusion = report_narrative.describe_beta_hedge(df_hedge)
+        with open(output_path / 'beta_hedge_comparison.md', 'w', encoding='utf-8') as f:
+            f.write(beta_hedge_comparison.create_markdown(df_hedge, benchmark_name, conclusion))
+
+        for _, row in df_hedge.iterrows():
+            logger.info(
+                f"  {row['factor']}: Beta {row['beta_before']:+.3f} → {row['beta_after']:+.3f}, "
+                f"年化 {row['annual_return_before']:.2%} → {row['annual_return_after']:.2%}"
+            )
+        logger.info(f"✅ Beta 对冲对比已保存: {output_path / 'beta_hedge_comparison.md'}")
+        return df_hedge
 
     def _verify_weight_neutrality(
         self,
@@ -691,7 +753,8 @@ class UnifiedEvaluator:
         robustness_results: dict,
         ic_results: dict,
         significance_results: dict,
-        output_dir: str = 'results'
+        output_dir: str = 'results',
+        df_hedge: pd.DataFrame = None
     ) -> str:
         """创建综合评估报告"""
         import json
@@ -837,7 +900,9 @@ class UnifiedEvaluator:
         # Caveat: Beta 暴露 + 最终结论
         md += "### 重要说明 (Caveat)\n\n"
         md += report_narrative.describe_exposure_caveat(exposure_full_sample)
-        md += report_narrative.final_conclusion(df_performance, significance_results, exposure_full_sample)
+        md += report_narrative.final_conclusion(
+            df_performance, significance_results, exposure_full_sample, df_hedge
+        )
 
         md += """
 ---
@@ -1039,6 +1104,31 @@ class UnifiedEvaluator:
                 md += ("⚠️  策略存在较大市场暴露。权重本身是资金中性的 (多空金额相等)，"
                        "但资金中性不等于 Beta 中性，要消除市场暴露需要额外做 Beta 对冲。\n\n")
 
+        if df_hedge is not None:
+            md += """
+---
+
+## 6.5 Beta 对冲前后对比
+
+详见 [beta_hedge_comparison.md](beta_hedge_comparison.md)
+
+在原组合之外加一份市场基准仓位, 把组合对大盘的敏感度抵消掉 (选股和权重不变)。
+对冲仓位只用上个月末已知的股票 Beta; 对冲前后用同一段时间比较, 均已扣除交易成本。
+
+| 策略 | 实现 Beta | 年化收益 | Sharpe | 最大回撤 |
+|------|-----------|---------|--------|----------|
+"""
+            for _, row in df_hedge.iterrows():
+                md += (
+                    f"| {row['factor']} "
+                    f"| {row['beta_before']:+.2f} → {row['beta_after']:+.2f} "
+                    f"| {row['annual_return_before']:.2%} → {row['annual_return_after']:.2%} "
+                    f"| {row['sharpe_before']:.2f} → {row['sharpe_after']:.2f} "
+                    f"| {row['max_drawdown_before']:.2%} → {row['max_drawdown_after']:.2%} |\n"
+                )
+            md += "\n每格是 对冲前 → 对冲后。\n\n"
+            md += report_narrative.describe_beta_hedge(df_hedge) + "\n"
+
         md += """
 ---
 
@@ -1071,11 +1161,20 @@ class UnifiedEvaluator:
                 name for name, stats in exposure_full_sample.items()
                 if abs(stats['beta']) > report_narrative.BETA_THRESHOLD
             ]
-            if high_beta_strategies:
+            if high_beta_strategies and df_hedge is None:
                 suggestions.append(f"""**实施 Beta 中性化**
    - 以下策略 Beta 超标: {', '.join(high_beta_strategies)}
    - 资金中性不保证 Beta 为 0，需要额外加市场对冲头寸
    - 对冲后才能分清收益来自因子还是来自大盘""")
+            elif df_hedge is not None:
+                still_exposed = list(df_hedge.loc[
+                    df_hedge['beta_after'].abs() > report_narrative.BETA_THRESHOLD, 'factor'
+                ])
+                if still_exposed:
+                    suggestions.append(f"""**弄清对冲不掉的市场暴露**
+   - {', '.join(still_exposed)} 加上 Beta 对冲后实现 Beta 仍然超标（见 6.5）
+   - 用历史 Beta 估计不出它们的市场暴露，需要看这部分暴露出现在哪些月份
+   - 在弄清之前，这些策略的收益里仍然混有大盘的影响""")
 
         # 幸存者偏差 (与数据无关, 始终成立)
         suggestions.append("""**使用历史成分股**
@@ -1285,17 +1384,7 @@ class UnifiedEvaluator:
 
             # Newey-West t-statistic (lag=6, 约半年)
             # 不捕获异常: 算不出来就报错, 不用 NaN 顶替 (NaN 会被后面的结论当成"不显著")
-            from statsmodels.regression.linear_model import OLS
-
-            # 简单回归: return_t = alpha + epsilon
-            y = returns.values
-            X = np.ones((len(y), 1))  # 只有常数项
-
-            # 使用 HAC (Heteroskedasticity and Autocorrelation Consistent) 标准误
-            model = OLS(y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 6})
-
-            nw_t_stat = model.tvalues[0]
-            nw_p_value = model.pvalues[0]
+            nw_t_stat, nw_p_value = newey_west_mean_test(returns)
 
             logger.info(f"  Newey-West 计算成功: t={nw_t_stat:.4f}, p={nw_p_value:.4f}")
 

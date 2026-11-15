@@ -141,3 +141,58 @@ def test_beta_within_threshold_is_not_called_excessive():
     assert "超过 0.1 阈值" in narrative.describe_exposure_caveat(high)
     assert "Beta-Neutral" in narrative.final_conclusion(ALL_NEGATIVE, ALL_NEGATIVE_SIG, high)
     assert "Beta-Neutral" not in narrative.final_conclusion(ALL_NEGATIVE, ALL_NEGATIVE_SIG, low)
+
+
+def _hedge_table(rows: list) -> pd.DataFrame:
+    """rows: (策略, 对冲前Beta, 对冲后Beta, 对冲前年化, 对冲后年化, 对冲前p, 对冲后p, 事前组合Beta均值)"""
+    return pd.DataFrame([
+        {
+            "factor": name, "beta_before": b0, "beta_after": b1,
+            "annual_return_before": r0, "annual_return_after": r1,
+            "mean_return_before": r0 / 12, "mean_return_after": r1 / 12,
+            "nw_p_value_before": p0, "nw_p_value_after": p1, "ex_ante_beta_mean": ex_ante,
+        }
+        for name, b0, b1, r0, r1, p0, p1, ex_ante in rows
+    ])
+
+
+def test_beta_hedge_conclusion_separates_fixed_from_unfixed():
+    """对冲后 Beta 降到阈值内的算"有效", 仍超标的算"对冲不掉"; 亏损里来自市场暴露的比例按数字算"""
+    table = _hedge_table([
+        ("LowVolatility", -0.50, -0.02, -0.10, -0.035, 0.01, 0.34, -0.49),
+        ("Momentum", -0.17, -0.15, -0.030, -0.027, 0.35, 0.27, 0.03),
+        ("Reversal", 0.02, 0.03, -0.006, -0.002, 0.66, 0.86, -0.02),
+    ])
+
+    text = narrative.describe_beta_hedge(table)
+
+    assert "**对冲有效**的策略：LowVolatility -0.50 → -0.02" in text
+    assert "**对冲不掉**的策略：Momentum -0.17 → -0.15" in text
+    assert "Reversal" not in text.split("**对冲不掉**")[0]          # 本来就没超标, 不算"有效"
+    assert "约 **65%** 来自市场暴露" in text                          # 1 - 3.5/10
+    assert "对冲后仍然没有任何策略取得正收益" in text
+    assert "LowVolatility 的负收益对冲前显著、对冲后不再显著" in text
+
+
+def test_beta_hedge_conclusion_reports_a_sign_flip():
+    """对冲后由负转正时要说"转正", 不能再说"仍然是负的"""
+    table = _hedge_table([("LowVolatility", -0.50, -0.02, -0.10, 0.02, 0.01, 0.40, -0.49)])
+
+    text = narrative.describe_beta_hedge(table)
+
+    assert "**对冲后转正**" in text
+    assert "仍然是负的" not in text
+    assert "对冲后 1 个策略中有 1 个年化收益为正" in text and "统计上都不显著" in text
+
+
+def test_final_conclusion_uses_the_hedge_result_when_available():
+    """有对冲对比时, 最终结论按对冲后的结果说, 不再写"需要做 Beta 中性化"""
+    exposure = {"Momentum": {"beta": -0.17, "alpha": 0.0001, "r_squared": 0.08}}
+    table = _hedge_table([("Momentum", -0.17, -0.15, -0.030, -0.027, 0.35, 0.27, 0.03)])
+
+    without = narrative.final_conclusion(ALL_NEGATIVE, ALL_NEGATIVE_SIG, exposure)
+    with_hedge = narrative.final_conclusion(ALL_NEGATIVE, ALL_NEGATIVE_SIG, exposure, table)
+
+    assert "需实施 Beta-Neutral 中性化" in without
+    assert "需实施 Beta-Neutral 中性化" not in with_hedge
+    assert "加上 Beta 对冲后（见 6.5），1 个策略中有 0 个年化收益为正，结论没有改变" in with_hedge

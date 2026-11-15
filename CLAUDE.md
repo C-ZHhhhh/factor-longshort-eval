@@ -166,6 +166,7 @@
 **规则**: 多头归一化到+1,空头归一化到-1,确保Σw≈0;同一只股票同一期不能同时在多头和空头
 **实现**: portfolio/neutralization.py, portfolio/portfolio_builder.py
 **验证**: abs(Σw) < 1e-10
+**Beta对冲**: 资金中性不等于Beta中性。Beta对冲在 backtest/beta_hedge.py 里以"叠加市场基准仓位"的方式做(不改权重),作为附加对比输出;对冲仓位只用上月末已知的Beta
 
 ### 5. 交易成本
 **规则**: cost = turnover × cost_bps / 10000

@@ -3,6 +3,11 @@
 [OUTPUT]: 中性化后的权重
 [POS]: 中性化模块 - 系统核心
 
+[UPDATE 2026-11-15]:
+- 删除 beta_neutral(): 它只是按 1/(beta+1) 调了一下单边权重, 并不能让组合 Beta 归零,
+  而且从未接入回测、没有测试。Beta 对冲现在由 backtest/beta_hedge.py 完成
+  (不改权重, 在组合之外加一份市场基准仓位)。
+
 [PROTOCOL]:
 1. 逻辑变更时同步更新此头部
 2. 更新后检查所在文件夹的 CLAUDE.md
@@ -80,65 +85,6 @@ class Neutralizer:
         self._verify_neutralization(df_neutral)
 
         logger.info("market-neutral中性化完成")
-        return df_neutral
-
-    def beta_neutral(
-        self,
-        df_weights: pd.DataFrame,
-        df_beta: pd.DataFrame
-    ) -> pd.DataFrame:
-        """
-        Beta中性化
-
-        确保组合beta ≈ 0: Σ(w_i × β_i) ≈ 0
-
-        Args:
-            df_weights: 原始权重 (月末日期 × 股票)
-            df_beta: 股票beta (月末日期 × 股票)
-
-        Returns:
-            beta中性化后的权重
-        """
-        logger.info("开始beta-neutral中性化...")
-
-        # 先进行market-neutral
-        df_neutral = self.market_neutral(df_weights)
-
-        # 对每个月调整权重使得组合beta ≈ 0
-        for date in df_neutral.index:
-            weights = df_neutral.loc[date]
-            betas = df_beta.loc[date]
-
-            # 计算当前组合beta
-            portfolio_beta = (weights * betas).sum()
-
-            if abs(portfolio_beta) < self.tolerance:
-                continue  # 已经中性
-
-            # 简单调整：对多空头分别按beta调整
-            # 这是一个简化实现，更复杂的实现需要优化算法
-            long_mask = weights > 0
-            short_mask = weights < 0
-
-            if portfolio_beta > 0:
-                # 组合beta为正，增加低beta多头，减少高beta多头
-                long_betas = betas[long_mask]
-                if len(long_betas) > 0:
-                    # 反beta加权调整
-                    adjustment = 1.0 / (long_betas + 1.0)
-                    df_neutral.loc[date, long_mask] *= adjustment
-                    # 重新归一化多头
-                    df_neutral.loc[date, long_mask] /= df_neutral.loc[date, long_mask].sum()
-            else:
-                # 组合beta为负，增加低beta空头，减少高beta空头
-                short_betas = betas[short_mask]
-                if len(short_betas) > 0:
-                    adjustment = 1.0 / (short_betas.abs() + 1.0)
-                    df_neutral.loc[date, short_mask] *= adjustment
-                    # 重新归一化空头
-                    df_neutral.loc[date, short_mask] /= abs(df_neutral.loc[date, short_mask].sum())
-
-        logger.info("beta-neutral中性化完成")
         return df_neutral
 
     def _verify_neutralization(self, df_weights: pd.DataFrame):

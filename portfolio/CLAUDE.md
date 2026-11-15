@@ -26,7 +26,7 @@
 
 **weighting.py**: 权重分配模块。支持等权、市值加权、风险平价等方法。
 
-**neutralization.py**: 中性化模块(⭐ CRITICAL)。实现market_neutral()和beta_neutral()。
+**neutralization.py**: 中性化模块(⭐ CRITICAL)。实现market_neutral()(资金中性:多头+1、空头-1)。Beta对冲不在这里做,见 `backtest/beta_hedge.py`。
 
 **rebalancer.py**: 换手率计算模块。计算TO = 0.5 × Σ|Δw|。
 

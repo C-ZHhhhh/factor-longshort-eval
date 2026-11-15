@@ -10,6 +10,11 @@
 [UPDATE 2026-02-03]:
 - 添加调仓频率参数: 支持每月/每2月/每季度调仓
 - 非调仓期继续持有上期权重，换手率=0
+
+[UPDATE 2026-11-15]:
+- 结果里新增 effective_weights: 每一期实际用来算收益的权重 (已剔除当期无收益的股票并重新归一化,
+  非调仓期是延续下来的权重)。holdings_history 只是目标权重, 不等于实际生效的权重;
+  Beta 对冲 (backtest/beta_hedge.py) 要按实际生效的权重算组合 Beta。
 """
 
 import pandas as pd
@@ -193,6 +198,7 @@ class BacktestEngine:
         returns_no_cost_series = pd.Series(index=dates, dtype=float)
         turnover_series = pd.Series(index=dates, dtype=float)
         cost_series = pd.Series(index=dates, dtype=float)
+        effective_weights = {}  # {日期: 当期实际生效的权重}
 
         # 初始净值
         current_nav = self.initial_nav
@@ -297,6 +303,7 @@ class BacktestEngine:
             returns_no_cost_series.iloc[i] = portfolio_return_no_cost
             turnover_series.iloc[i] = turnover
             cost_series.iloc[i] = -cost  # 记录为正值
+            effective_weights[date] = weights_valid
 
             # 更新上期权重（用于下次调仓时计算换手率）
             if is_rebalance:
@@ -320,7 +327,11 @@ class BacktestEngine:
             'returns_no_cost': returns_no_cost_series,
             'turnover': turnover_series,
             'cost_series': cost_series,
-            'holdings_history': df_weights,  # 持仓历史就是权重序列
+            'holdings_history': df_weights,  # 目标权重 (调仓期的新权重; 非调仓期并未生效)
+            # 每期实际生效的权重: 行=收益所在的月份, 列=股票, 未持有为0
+            'effective_weights': pd.DataFrame(effective_weights).T.reindex(
+                index=dates, columns=df_weights.columns
+            ).fillna(0.0),
         }
 
     def _print_summary(self, results: Dict):

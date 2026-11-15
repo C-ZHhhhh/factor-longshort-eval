@@ -165,3 +165,26 @@ def test_nan_in_report_data_is_rejected():
 
     with pytest.raises(ValueError):
         html_report.render_html(data)
+
+
+def test_beta_hedge_section_is_optional_and_follows_the_table():
+    """没有对冲对比表时网页数据里没有这一节; 有的话每个策略一行, 颜色槽位不变"""
+    assert html_report.build_report_data(**ALL_NEGATIVE)["beta_hedge"] is None
+
+    hedge = pd.DataFrame([{
+        "factor": "LowVolatility", "start": "2015-08", "end": "2026-01", "ex_ante_beta_mean": -0.49,
+        "beta_before": -0.50, "beta_after": -0.02,
+        "annual_return_before": -0.10, "annual_return_after": -0.035,
+        "sharpe_before": -0.77, "sharpe_after": -0.29,
+        "max_drawdown_before": -0.70, "max_drawdown_after": -0.39,
+        "mean_return_before": -0.008, "mean_return_after": -0.003,
+        "nw_p_value_before": 0.01, "nw_p_value_after": 0.34,
+    }])
+    data = html_report.build_report_data(**ALL_NEGATIVE, df_hedge=hedge)
+
+    row = data["beta_hedge"]["rows"][0]
+    assert (row["key"], row["slot"], row["short_label"]) == ("LowVolatility", 3, "低波")
+    assert (row["beta_before"], row["beta_after"]) == (-0.50, -0.02)
+    assert any("对冲有效" in note for note in data["beta_hedge"]["notes"])
+    assert "下一节" in data["exposure_notes"][1]
+    html_report.render_html(data)  # 能正常渲染

@@ -7,6 +7,16 @@
 示例:
     python scripts/download_data.py --start 2015-01-01
     python scripts/download_data.py --start 2015-01-01 --end 2023-12-31 --no-cache
+    python scripts/download_data.py --add-benchmark-daily   # 只给已有缓存补上SPY日收益率
+
+[INPUT]: yfinance (联网)
+[OUTPUT]: data/cache/ 下的缓存文件
+[POS]: 数据下载入口
+
+[PROTOCOL]:
+1. --add-benchmark-daily 只往最新的缓存里新增 'SPY_daily' 一个键, 不重新下载股票。
+   Beta对冲需要它; 新下载的缓存自带, 只有旧缓存需要补。
+2. 逻辑变更时同步更新此头部
 """
 
 import argparse
@@ -17,7 +27,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from data.data_cleaner import get_clean_data
+from data.data_cleaner import add_benchmark_daily_to_cache, get_clean_data
+from data.data_loader import DataLoader
 from data.universe import get_sp500_tickers
 from utils.logger import get_logger
 from utils.config import config
@@ -51,7 +62,20 @@ def main():
         help='测试模式,仅下载10只股票'
     )
 
+    parser.add_argument(
+        '--add-benchmark-daily',
+        action='store_true',
+        help='只给最新的缓存补上SPY日收益率(Beta对冲需要), 不重新下载股票数据'
+    )
+
     args = parser.parse_args()
+
+    if args.add_benchmark_daily:
+        cache_file = DataLoader().latest_cache_file()
+        logger.info(f"给缓存补上SPY日收益率: {cache_file}")
+        daily = add_benchmark_daily_to_cache(cache_file)
+        logger.info(f"完成: {len(daily)} 个交易日 ({daily.index[0].date()} ~ {daily.index[-1].date()})")
+        return
 
     logger.info("="*60)
     logger.info("开始下载S&P 500历史数据")
