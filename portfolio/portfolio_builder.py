@@ -17,6 +17,7 @@
   被最小持有期锁住的多头掉到空头进入区时会被同时做空(空头标记覆盖多头)。
 - 现在两侧一起决策: 一侧仍在持有的股票, 另一侧不允许新开仓, 等它退出后才能反向进入。
 - 多空两侧共用同一套 保留/进入 逻辑(_entry_and_exit_zones/_retain/_enter), 不再复制两份。
+- 初始化时拒绝 exit_quantile < entry_quantile (退出线比进入线还严, 缓冲带失去意义)。
 """
 
 import pandas as pd
@@ -57,6 +58,11 @@ class PortfolioBuilder:
         if not 0 < entry_quantile <= 0.5:
             # 超过50%时多头进入区和空头进入区会重叠, 同一只股票会被同时做多和做空
             raise ValueError(f"entry_quantile必须在(0, 0.5]之间, 当前为{entry_quantile}")
+        if exit_quantile < entry_quantile:
+            # 退出线比进入线还严: 刚买入的股票立刻就"已掉出退出阈值", 缓冲带失去意义
+            raise ValueError(
+                f"exit_quantile({exit_quantile})不能小于entry_quantile({entry_quantile})"
+            )
 
         self.entry_quantile = entry_quantile
         self.exit_quantile = exit_quantile
