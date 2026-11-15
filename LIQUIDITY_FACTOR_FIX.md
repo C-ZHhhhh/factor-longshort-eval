@@ -150,7 +150,7 @@ results = generator.generate_comprehensive_report(df_clean)
 ### 方式2: 重新下载数据（推荐）
 
 ```bash
-cd /Users/zehua/Projects/factor_reg
+cd factor-longshort-eval
 
 # 重新下载数据（会包含volume）
 python scripts/download_data.py
@@ -197,19 +197,21 @@ uv run python scripts/generate_comprehensive_report.py
 
 ### 有volume数据时
 
-运行综合报告，输出会包含:
+运行综合报告，输出会包含 (下表是 2026-11-15 按修复后的代码重跑的实际结果, 来自 `results/COMPREHENSIVE_EVALUATION_REPORT.md`):
 
 ```
 多因子对比:
 | 因子 | 年化收益 | Sharpe | 最大回撤 |
 |------|----------|--------|----------|
-| Momentum | 0.26% | 0.12 | -20.68% |
-| Trend | -1.46% | -0.10 | -27.71% |
-| Reversal | -0.99% | -0.19 | -19.06% |
-| Liquidity | ?.??% | ?.?? | ?.??% |  ← 新增！
-| Composite | -4.76% | -0.64 | -40.08% |
-| LowVolatility | -8.98% | -0.76 | -68.43% |
+| Trend | -1.10% | -0.11 | -26.14% |
+| Reversal | -0.65% | -0.13 | -14.94% |
+| Momentum | -2.97% | -0.29 | -34.94% |
+| Liquidity | -3.60% | -0.60 | -39.21% |  ← 新增
+| Composite | -5.59% | -0.65 | -43.71% |
+| LowVolatility | -9.91% | -0.76 | -69.99% |
 ```
+
+这里的 Composite 是含 Liquidity 的 5 因子合成; 项目正式结果 (`results/performance_table.md`) 里的 Composite 是 4 因子合成, 数字略有不同。
 
 ### 没有volume数据时
 

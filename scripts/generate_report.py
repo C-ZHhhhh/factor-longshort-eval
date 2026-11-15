@@ -22,6 +22,18 @@ def generate_report():
     df_return_monthly = cache_data['return_monthly']
 
     file_size = os.path.getsize(cache_file) / (1024 * 1024)
+    # 报告里只写相对项目根目录的路径, 不把本机的绝对路径写进仓库
+    cache_path_display = Path(cache_file).resolve().relative_to(project_root.resolve()).as_posix()
+    contents = {
+        'price': '复权价格面板数据',
+        'volume': '成交量',
+        'return_daily': '日收益率',
+        'return_monthly': '月收益率 (只含完整的月份)',
+        'SPY': 'SPY月收益率 (基准)',
+    }
+    contents_lines = '\n'.join(
+        f'- `{key}`: {desc}' for key, desc in contents.items() if key in cache_data
+    )
 
     # 生成报告
     report = f'''# S&P 500历史数据下载报告 (去重版)
@@ -108,22 +120,20 @@ def generate_report():
 
 ### 缓存文件
 ```
-路径: {cache_file}
+路径: {cache_path_display}
 大小: {file_size:.1f} MB
 格式: Pickle (pandas)
 ```
 
 ### 包含内容
-- `price`: 复权价格面板数据
-- `return_daily`: 日收益率
-- `return_monthly`: 月收益率
+{contents_lines}
 
 ### 快速加载
 ```python
 import pandas as pd
 
 # 加载数据
-cache_data = pd.read_pickle('{cache_file}')
+cache_data = pd.read_pickle('{cache_path_display}')
 df_price = cache_data['price']
 df_return_daily = cache_data['return_daily']
 df_return_monthly = cache_data['return_monthly']

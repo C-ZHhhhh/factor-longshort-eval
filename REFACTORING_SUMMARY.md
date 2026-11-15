@@ -127,7 +127,7 @@ __all__ = [
 
 **运行方式**:
 ```bash
-cd /Users/zehua/Projects/factor_reg
+cd factor-longshort-eval
 python scripts/compare_factors_simple.py
 ```
 
@@ -148,7 +148,7 @@ python scripts/compare_factors_simple.py
 
 **运行方式**:
 ```bash
-cd /Users/zehua/Projects/factor_reg
+cd factor-longshort-eval
 python scripts/robustness_test_simple.py
 ```
 
