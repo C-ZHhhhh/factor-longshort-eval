@@ -1,5 +1,44 @@
 # 因子/组合回测
 
+用美股 S&P 500 成分股，检验 5 个常见的价格类因子（动量、短期反转、低波、趋势、流动性）做成多空组合后，扣掉交易成本还能不能赚钱。
+
+**当前结论**：在这个样本（2015 ~ 2026-01）和配置下，所有因子和合成因子扣除成本后都是负收益，不扣成本也是负的。数字见第 9 节。
+
+> 第 0–8 节讲研究设计和**代码实际做了什么**。当初设计了但没有实现、或者实现了但没用在正式结果里的部分，都用"未实现 / 未使用"标了出来。
+> 第 9 节是结果。
+
+## 快速开始
+
+```bash
+pip install -r requirements.txt
+python scripts/download_data.py --start 2015-01-01 --end 2026-02-05   # 下载数据到 data/cache/
+python scripts/run_evaluation.py                                      # 生成 results/ 下的表格和报告
+python scripts/generate_figures.py                                    # 生成 results/figures/ 下的图
+python -m pytest                                                      # 回归测试（不联网、不需要数据）
+```
+
+- Python ≥ 3.9（第 9 节的结果是在 Python 3.12 下跑出来的）。
+- 数据默认只用 yfinance，不需要任何账号。Alpaca 是可选的第二数据源，配置方法见 [docs/ALPACA_SETUP.md](docs/ALPACA_SETUP.md)。
+
+## 目录结构
+
+```
+data/           数据下载、清洗、缓存
+factors/        5 个因子 + 去极值/标准化 + 因子合成
+portfolio/      选股、权重、资金中性
+backtest/       时间对齐、回测循环、交易成本、绩效指标
+evaluation/     IC、显著性检验、市场暴露、稳健性、多因子对比
+visualization/  图表
+utils/          配置、日志、日期工具
+scripts/        可以直接运行的入口脚本
+tests/          回归测试
+results/        正式结果（表格、报告、图）
+```
+
+除 `scripts/` 和 `results/` 外，每个目录下都有一份 `CLAUDE.md` 说明该目录里各文件的职责。
+
+---
+
 ## 0. 研究目标与研究设计
 
 **核心研究问题**
@@ -8,9 +47,9 @@
 
 **关键设计选择**
 
-* 样本池：S&P 500
-* 频率：月度调仓
-* 组合形式：market-neutral long-short（净暴露≈0）
+* 样本池：当前 S&P 500 成分股
+* 频率：月频数据，每 2 个月调仓一次
+* 组合形式：资金中性的多空组合（多头权重合计 +1，空头合计 −1，净资金暴露 = 0）
 * 评价：Sharpe、MaxDD、换手、成本敏感性、IC/IR、子样本稳定性
 
 ---
@@ -19,19 +58,24 @@
 
 ## 1.1 Universe（样本池）
 
-* 固定一份 tickers 列表（例如 150–300 只）
+* 从 Wikipedia 抓取**当前**的 S&P 500 成分股名单（503 个代码）
+* 同一家公司的多类股票只留成交量更高的一个（如 GOOGL / GOOG 只留 GOOGL）
+* 剔除缺失过多的股票后，实际进入回测的是 **472 只**
+* 用今天的名单回测过去，存在幸存者偏差，见 9.3
 
 ## 1.2 需要的数据字段
 
-* `Adj Close`（复权收盘价）
-* `Volume`（做流动性 proxy）
-* 交易日历（日期索引）
+* `Adj Close`（复权收盘价，所有收益都用它算）
+* `Volume`（成交量，流动性因子用）
+* SPY 的复权价（作为市场基准，计算 Beta 用）
 
 ## 1.3 数据清洗
 
-* 处理缺失值：某股票缺失超过 X% 的月份则当期剔除
-* 对齐：所有股票收益在同一时间点对齐（避免未来数据混进来）
-* 复权：必须用复权价算收益（用 Adj Close）
+* 缺失：某只股票缺失的交易日超过 30%，整只剔除；零星缺失最多向前填充 5 天
+* 月收益：月末复权价的环比涨跌幅
+* 不完整的月份：如果数据的最后一个月没走完，这个月不计入（否则会把半个月当成整月）
+* 数据源：默认只用 yfinance。代码支持再用 Alpaca 交叉验证（两边价格差异超过 1% 的点标记为缺失），
+  但需要自己配置 API key，**这条路径没有实测过**
 
 ---
 
@@ -39,25 +83,31 @@
 
 ## 2.1 因子选择
 
-1. **动量（12-1 momentum）**
+时间约定：**月末 t 的因子值只用到 t 当天为止的数据**。"用 t 的因子去赚 t+1 的收益"这一步滞后统一在回测引擎里做一次（见 5.1），因子内部不再额外滞后。
 
-* ( $MOM_{t} = R_{t-12m, t-1m}$ )
+1. **动量（12-1 momentum）**：过去 12 个月的涨幅，跳过最近 1 个月
 
-2. **短期反转（1M reversal）**
+* ( $MOM_{t} = \frac{P_{t-1m}}{P_{t-12m}} - 1$ )
 
-* ( $REV_{t} = -R_{t-1m, t}$ )
+2. **短期反转（1M reversal）**：当月涨得多的，预期下月回落
 
-3. **低波（low volatility）**
+* ( $REV_{t} = -R_{t}$ )，$R_t$ 是 t 月的收益率
 
-* ( $LOWVOL_{t} = -\sigma(\text{daily returns over last 3m}$) )
+3. **低波（low volatility）**：过去 3 个月（63 个交易日）日收益的标准差，取负号
 
-4. **趋势（time-series trend, 200D MA gap）**
+* ( $LOWVOL_{t} = -\sigma(\text{daily returns over last 63d})$ )
+
+4. **趋势（200D MA gap）**：价格相对 200 日均线的偏离
 
 * ( $TREND_t = \frac{P_t}{MA_{200}(P)_t} - 1$ )
 
-5. **流动性/成交量冲击（volume/turnover proxy）**
+5. **流动性（dollar volume）**：过去 63 个交易日平均成交额的对数
 
-* 用成交额或换手 proxy 做“流动性风险”的控制
+* ( $LIQ_t = \log(\overline{P \times Volume}_{63d})$ )
+* 这个因子**不在正式评估里**（`scripts/run_evaluation.py` 只跑前 4 个因子和它们的合成）。
+  它的结果单独放在 [FINAL_SUMMARY.md](FINAL_SUMMARY.md)
+
+所有因子都是"因子值越高越做多"。
 
 ## 2.2 因子预处理
 
@@ -65,7 +115,7 @@
 
 ### (1) Winsorize 去极值（防止少数点把回测扭曲）
 
-* 把因子截断在 1%–99% 或 5%–95%
+* 把因子截断在当月的 1%–99% 分位之间
 
 ### (2) 标准化（z-score），才能多因子合成
 
@@ -79,51 +129,51 @@
 
 # 3) 中性化（Neutralization）
 
-## 3.1 第一档：Market-neutral
+## 3.1 第一档：资金中性（已实现，正式结果用的就是这个）
 
-每月：
+* 多头权重合计 +1，空头权重合计 −1，所以权重总和 = 0
+* 同一只股票同一期不会同时出现在多头和空头
 
-* 做多 top 20%
-* 做空 bottom 20%
-* 多空权重等额（总多=1，总空=-1）
+资金中性只保证多空两边的钱一样多，**不保证组合不随大盘涨跌**。实测各组合对 SPY 的 Beta 并不接近 0（动量 −0.17，低波 −0.50），见 9.2。
 
-这样净暴露≈0。
+## 3.2 第二档：Beta-neutral（未使用）
 
-## 3.2 第二档：Beta-neutral
+设计：用过去 252 天日收益对市场（SPY）回归得到每只股票的 beta，调整权重使 ( $\sum w_i \beta_i \approx 0$ )。
 
-用过去 252 天日收益回归市场（比如 SPY）得到每只股票 beta：
+现状：`portfolio/neutralization.py` 里有 `beta_neutral` 函数，但没有接入任何回测，也没有测试，正式结果没有用它。
 
-* 对每月持仓，调整权重使得
-  ( $\sum w_i \beta_i \approx 0$ )
+## 3.3 第三档：行业中性（未实现）
 
-## 3.3 第三档：行业中性
-
-在每个行业内部做 top/bottom，再合并。
-（需要 ticker → sector 的映射表）
+设计：在每个行业内部分别选前/后分位，再合并（需要 ticker → sector 的映射表）。代码里没有这部分。
 
 ---
 
 # 4) 组合构建（Portfolio Construction）
 
-## 4.1 排序型
+## 4.1 排序型（正式结果的做法）
 
-* Top/Bottom 分位数
-* 权重等权或按排名线性
+每 2 个月调仓一次，按因子值排序：
 
-## 4.2 风险调整权重
+* **进入**：排名进入前 25% 才买入做多，进入后 25% 才卖出做空
+* **退出**：要掉出前/后 30% 才平仓（进入线和退出线之间留了一段缓冲，避免在边界上来回买卖）
+* **最小持有期**：新进的股票至少持有 12 个月才允许退出
+* **权重**：多头内部等权、空头内部等权
 
-用过去 63 天波动率做风险平价（简化版）：
+缓冲带和最小持有期是为了降低换手率加的。这组参数的由来和问题见 9.0。
 
-* ( $w_i \propto \frac{1}{\sigma_i}$ )
-  并在多头和空头各自归一化
+## 4.2 风险调整权重（未使用）
+
+设计：按波动率的倒数分配权重 ( $w_i \propto \frac{1}{\sigma_i}$ )，多头和空头各自归一化。
+
+现状：`portfolio/weighting.py` 支持因子值加权和反波动率加权，但正式结果只用了等权，这两种没有评估过。
 
 ## 4.3 多因子合成
 
-把多个因子 z-score 后平均：
+把多个因子 z-score 后等权平均，再按合成分数排序构建组合：
 
 * ( $score = \frac{1}{K}\sum_k z_{k}$ )
 
-再按 score 排序构建组合。
+正式结果里的 Composite 是动量、反转、低波、趋势 4 个因子的合成。
 
 ---
 
@@ -131,27 +181,29 @@
 
 ## 5.1 时间对齐（最重要：防 look-ahead）
 
-* 月末 t 计算因子
-* 用 **t+1 的开盘或下一个交易日收盘** 建仓
-  实现上至少做到：**信号 shift(1)**
+* 月末 t 计算因子、得到权重
+* 这组权重用来赚 **t+1 月**的收益。实现上是对权重做一次 `shift(1)`，只在 `backtest/time_aligner.py` 里做
+
+简化假设：月收益是"月末收盘价到下个月末收盘价"，所以相当于假设能按算出信号的那个月末收盘价成交。没有模拟次日开盘成交、滑点和冲击成本。
 
 ## 5.2 收益计算
 
-* 计算组合在下个月的收益
-* 多空收益：
+* 组合当月收益 = 各股票权重 × 当月收益率，再求和
+* 因为多头合计 +1、空头合计 −1，这等价于
   ( $r_{LS} = r_{long} - r_{short}$ )
 
 ## 5.3 换手率（Turnover）
 
-用定义（每期）：
+每期：
 
 * ( $TO_t = \frac{1}{2}\sum_i |w_{i,t} - w_{i,t-1}|$ )
 
-## 5.4 交易成本模型（你要做“敏感性分析”）
+第一期从空仓建仓，换手率是 100%。
 
-* 成本 = `TO_t * cost_bps`
-* 做 3 档：10/20/30 bps
-  输出不同成本下的 Sharpe 和年化收益。
+## 5.4 交易成本模型
+
+* 成本 = `TO_t × cost_bps / 10000`，默认 20 bps
+* 成本敏感性测试跑了 5 档：10 / 20 / 30 / 40 / 50 bps
 
 ---
 
@@ -159,60 +211,68 @@
 
 ## 6.1 交易绩效
 
-* 年化收益、年化波动
-* Sharpe（无风险利率设 0 ）
-* Max Drawdown
-* 月胜率、偏度/峰度
+* 年化收益（复利口径）、年化波动
+* Sharpe = 月均收益 / 月收益标准差 × √12（无风险利率设 0）
+* Max Drawdown（历史最高净值把初始净值 1.0 算进去）
+* 月胜率、Calmar、Sortino
 
 ## 6.2 因子有效性：IC/IR
 
 每期算：
 
-* IC = Spearman corr(因子值, 下一期收益)
+* IC = Spearman corr(t 月末因子值, t+1 月收益)
 * IR = mean(IC) / std(IC)
 
-输出：
+输出 IC 时间序列、平均 IC、IC t-stat。
 
-* IC 时间序列
-* 平均 IC、IC t-stat
+## 6.3 显著性检验
 
-## 6.3 暴露检查（Exposure）
+* 对月度净收益做均值是否为 0 的检验：普通 t 检验 + Newey-West（滞后 6 期，考虑收益自相关）
+* 对 IC 序列做 t 检验
 
-至少做：
+## 6.4 暴露检查（Exposure）
 
-* 市场 beta（是否接近 0）
-  
-  展示对比：
-  
-* neutral 前 beta
-
-* neutral 后 beta
+* 用组合月收益对 SPY 月收益回归，得到 Beta、Alpha、R²；|Beta| > 0.1 记为超标
+* 设计里的"中性化前后 Beta 对比"没有做，因为 Beta 中性没有接入（见 3.2）
 
 ---
 
 # 7) 稳健性（Robustness）
 
-1. **子样本**：2015–2019 vs 2020–2025
-2. **分位数参数**：Top/Bottom 10% vs 20% vs 30%
-3. **成本敏感性**：10/20/30 bps
-4. **再平衡频率**：月度 vs 双月/季度
+实际跑过的测试（都以动量因子为对象）：
+
+1. **子样本**：以 2020-01 为界分成 2016–2019 和 2020–2026-01 两段。每段都从空仓重新开始，所以两段的结果不能直接拼成全样本的数字
+2. **分位数参数**：进入阈值 10% / 15% / 20% / 25% / 30% 共 5 组，退出阈值固定为进入阈值 + 5%
+3. **成本敏感性**：10 / 20 / 30 / 40 / 50 bps
+4. **调仓频率 × 最小持有期**：每月 / 每 2 月 / 每季度 × 4 档持有期，共 12 组，见 [OPTIMIZATION_REPORT.md](OPTIMIZATION_REPORT.md)
+
+结果见 9.2。
 
 ---
 
 # 8) 交付与展示（Deliverables）
 
-`results/` 里有：
+仓库里提交的 `results/`：
 
-**图**
+**图**（`results/figures/`）
 
-* 多空净值曲线（含成本 vs 不含成本对比）
-* 回撤曲线（Drawdown）
-* IC 序列图（或 IC 分布直方图）
+* `fig_01` 动量净值曲线（含成本 vs 不含成本）
+* `fig_02` 动量回撤曲线
+* `fig_03` 成本敏感性
+* `fig_04` 子样本对比
+* `fig_05` 各因子的 Alpha / Beta
+* `fig_06` 显著性检验的 t 统计量
 
-**表**
+**表和报告**
 
-* Performance summary：年化收益/波动/Sharpe/MaxDD/换手
-* Robustness table：不同成本/子样本/分位数下的对比
+* `performance_table`：年化收益 / 波动 / Sharpe / MaxDD / 换手
+* `robustness_table`：子样本 / 成本 / 分位数
+* `significance_summary`、`exposure_summary`、`cagr_diagnostics`
+* `EVALUATION_REPORT.md`：综合评估报告
+
+运行脚本还会在 `results/` 下生成净值序列、IC 序列等中间文件，这些没有提交到仓库。
+
+---
 
 # 9) Key Results（关键结果）
 
@@ -231,15 +291,11 @@
 | 成本 | 20 bps × 换手率 |
 | 市场基准 | SPY（复权价月收益） |
 
-注意：这套配置（为降低换手而加的持有期和进出阈值）与上文第 3、4 节描述的"月度调仓、前后 20%"不同，以本表为准。
+**关于这组参数**：它当初是在有 bug 的代码上做网格搜索选出来的"最优参数"。修复后重跑，它在 12 组参数里排第 7，
+而且 12 组全部是负收益（年化 −1.45% ~ −4.44%）。这里没有改用排第一的那组：在同一段历史上挑表现最好的参数只是事后挑选，
+不代表以后也好。详见 [OPTIMIZATION_REPORT.md](OPTIMIZATION_REPORT.md)。
 
-```bash
-pip install -r requirements.txt
-python scripts/download_data.py --start 2015-01-01 --end 2026-02-05   # 下载数据到 data/cache/
-python scripts/run_evaluation.py                                      # 生成 results/ 下的表格和报告
-python scripts/generate_figures.py                                    # 生成 results/figures/ 下的图
-python -m pytest                                                      # 回归测试
-```
+复现命令见开头的"快速开始"。
 
 ## 9.1 各因子表现总览
 
@@ -255,6 +311,11 @@ python -m pytest                                                      # 回归�
 
 **结论**: 在这个样本和配置下，没有任何一个因子在扣除成本后取得正收益。Momentum 的负收益在统计上不显著，
 即没有证据表明它有稳定的超额收益，也没有证据表明反向做就能赚钱。
+
+**其他因子的显著性**（Newey-West）: Reversal 和 Trend 的负收益同样不显著；LowVolatility 的负收益显著（p = 0.015）；Composite 的 p = 0.0498，刚好压在 5% 的线上。
+
+**流动性因子**: 不在上表里（正式评估只跑 4 个因子）。同一套配置下单独跑的结果是年化 -3.60%、Sharpe -0.60、最大回撤 -39.21%；
+把它也加进去的 5 因子合成是年化 -5.59%。见 [FINAL_SUMMARY.md](FINAL_SUMMARY.md)。
 
 ---
 
@@ -275,6 +336,18 @@ python -m pytest                                                      # 回归�
 **关键发现**:
 - 10 / 20 / 30 / 40 / 50 bps 下年化净收益依次为 -2.78% / -2.97% / -3.16% / -3.34% / -3.53%
 - **结论**: 换手率不高（约 16%），成本不是主要矛盾；问题在于因子本身在这段样本里没有选股能力
+
+---
+
+### 子样本与分位数
+
+![Subsample](results/figures/fig_04_subsample_bar_momentum.png)
+
+**关键发现**（Momentum，扣除 20 bps 成本）:
+- 2016–2019：年化 -4.33%，Sharpe -0.46，最大回撤 -19.69%
+- 2020–2026-01：年化 -3.44%，Sharpe -0.33，最大回撤 -32.98%
+- 分位数测试的 5 组参数全部为负，年化在 -2.34% ~ -4.19% 之间
+- **结论**: 换时间段、换分位数，结果都是负的，不是某一组参数碰巧不好
 
 ---
 
@@ -301,10 +374,27 @@ python -m pytest                                                      # 回归�
 
 ## 9.4 完整报告
 
-详细分析请参阅：
+**正式结果**（`scripts/run_evaluation.py` 生成）
 - [Evaluation Report](results/EVALUATION_REPORT.md) - 综合评估报告
+- [Performance Table](results/performance_table.md) / [Robustness Table](results/robustness_table.md) - 绩效和稳健性表格
+- [Significance](results/significance_summary.md) / [Exposure](results/exposure_summary.md) - 显著性检验和市场暴露
 - [CAGR Diagnostics](results/cagr_diagnostics.md) - 年化收益计算验证
 - [All Figures](results/figures/) - 完整图表集
-- [Results Snapshot](docs/03_results_snapshot.md) - 修复前的旧版快照（数字已过时，仅作记录）
+
+**专题总结**（已按修复后的代码更新）
+- [FINAL_SUMMARY.md](FINAL_SUMMARY.md) - 5 个因子（含流动性）和合成因子的对比
+- [OPTIMIZATION_REPORT.md](OPTIMIZATION_REPORT.md) - 调仓频率 × 最小持有期的 12 组参数对比
+- [THREE_PRIORITIES_SUMMARY.md](THREE_PRIORITIES_SUMMARY.md) - 中性化检查、多因子对比、稳健性测试的汇总
+
+**各阶段的自动报告**（由 `scripts/generate_*.py` 和 `scripts/test_multi_factor.py` 生成，数字来自实际运行）
+- [DATA_REPORT.md](DATA_REPORT.md)、[FACTOR_REPORT.md](FACTOR_REPORT.md)、[PORTFOLIO_REPORT.md](PORTFOLIO_REPORT.md)、
+  [BACKTEST_REPORT.md](BACKTEST_REPORT.md)、[MULTI_FACTOR_REPORT.md](MULTI_FACTOR_REPORT.md)
+- 注意 `BACKTEST_REPORT.md` 用的是最简单的配置（每月调仓、前后各 20%），只为验证回测引擎，和上面的正式配置不同
+
+**历史记录**（数字已过时或只是示例，开头都有说明，仅作排查过程的记录）
+- [AUDIT_PACK.md](AUDIT_PACK.md)、[AUDIT_PACK_REAL.md](AUDIT_PACK_REAL.md)、[EVALUATION_SUMMARY.md](EVALUATION_SUMMARY.md)、
+  [EVALUATION_FIXES_SUMMARY.md](EVALUATION_FIXES_SUMMARY.md)、[DRAWDOWN_DIAGNOSIS.md](DRAWDOWN_DIAGNOSIS.md)、
+  [HOW_TO_GET_ACTUAL_RESULTS.md](HOW_TO_GET_ACTUAL_RESULTS.md)、[CODE_VERIFICATION_REPORT.md](CODE_VERIFICATION_REPORT.md)
+- [Results Snapshot](docs/03_results_snapshot.md) - 修复前的旧版快照
 
 ---
