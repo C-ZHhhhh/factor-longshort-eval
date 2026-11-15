@@ -1,12 +1,14 @@
 """
 多因子对比测试
 
-使用最优参数(2monthly, 12月)测试:
+用项目正式结果的那组参数(2monthly, 12月最小持有期, 25%/30%进出阈值)测试:
 1. 5个单因子: 动量、反转、低波、趋势、流动性
 2. 多因子合成: 5个因子等权平均
 3. 对比分析表现
 
-目标: 找到表现最好的因子组合
+[INPUT]: data/cache 里最新的缓存 (价格、成交量、月收益率)
+[OUTPUT]: results/multi_factor_comparison.csv, 项目根目录的 MULTI_FACTOR_REPORT.md
+[POS]: 实验脚本 + 报告生成。报告里的数字、日期、样本信息和结论都跟着本次运行的结果走, 不写死。
 """
 
 import sys
@@ -14,6 +16,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
+from datetime import datetime
 import numpy as np
 from utils.logger import get_logger
 from data.data_loader import DataLoader
@@ -362,26 +365,35 @@ def main():
     logger.info("8. 生成对比报告")
     logger.info("="*70)
 
-    generate_comparison_report(df_summary_sorted, best_factor, composite if len(composite) > 0 else None)
+    generate_comparison_report(
+        df_summary_sorted,
+        best_factor,
+        composite if len(composite) > 0 else None,
+        n_stocks=df_return_monthly.shape[1],
+        return_start=df_return_monthly.index[0],
+        return_end=df_return_monthly.index[-1],
+    )
 
     logger.info("\n" + "="*70)
     logger.info("多因子对比测试完成！")
     logger.info("="*70)
 
 
-def generate_comparison_report(df_summary, best_factor, composite):
-    """生成markdown对比报告"""
+def generate_comparison_report(df_summary, best_factor, composite, n_stocks, return_start, return_end):
+    """生成markdown对比报告 (报告里的数字、日期、样本信息都从入参取, 不写死)"""
+
+    generated_at = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     report = f'''# 多因子对比测试报告
 
-**测试时间**: 2026-02-03
+**测试时间**: {generated_at}
 **测试参数**: 每2月调仓 + 12月最小持有期 + 25%/30%进出阈值
 
 ---
 
 ## 测试概览
 
-使用最优参数对6个因子进行回测对比:
+使用同一组参数对6个因子进行回测对比:
 - 5个单因子: 动量、反转、低波、趋势、流动性
 - 1个合成因子: 5个因子等权平均
 
@@ -537,34 +549,33 @@ def generate_comparison_report(df_summary, best_factor, composite):
 
 ---
 
-## 结论与建议
-
-### 实盘建议
+## 结论
 
 '''
 
-    # 根据结果给建议
-    if best_factor['sharpe_ratio'] > 0:
-        report += f"1. **推荐使用 {best_factor['factor']}** - 表现最优且风险可控\n"
+    # 结论跟着结果走: 只有收益为正才谈得上"哪个更好"
+    all_negative = (df_summary['annual_return'] < 0).all()
+    if all_negative:
+        report += "1. **所有组合在测试期均为负收益**, 排名只说明谁亏得少, 这里没有可以实盘的策略\n"
     else:
-        report += f"1. **谨慎使用** - 所有因子在测试期均为负收益\n"
+        report += f"1. **Sharpe最高的是 {best_factor['factor']}** ({best_factor['sharpe_ratio']:.2f})\n"
 
     if composite is not None and composite['sharpe_ratio'] > single_factors['sharpe_ratio'].max():
-        report += f"2. **优先考虑合成因子** - 分散化效果显著\n"
-    else:
-        report += f"2. **可考虑最优单因子** - 当前合成效果不及最佳单因子\n"
+        report += "2. **合成因子的Sharpe高于所有单因子**\n"
+    elif composite is not None:
+        report += "2. **合成因子没有超过最好的单因子**, 等权合成没有带来分散化的好处\n"
 
     report += f'''
-3. **继续优化**
-   - 测试不同的因子合成权重
-   - 考虑行业中性化
-   - 优化进出阈值参数
+3. **读结果时的局限**
+   - 股票池是当前的S&P 500成分股, 有幸存者偏差
+   - 单一市场、十年左右的样本, 不足以下定论
+   - 多空金额相等不代表不受大盘涨跌影响 (Beta不为0)
 
 ---
 
-**报告生成时间**: 2026-02-03
-**测试样本**: S&P 500 (476只股票)
-**测试时间**: 2016-02 ~ 2025-12 (85期)
+**报告生成时间**: {generated_at}
+**测试样本**: 当前S&P 500成分股 ({n_stocks}只股票)
+**收益数据范围**: {return_start.strftime('%Y-%m')} ~ {return_end.strftime('%Y-%m')} (月频, 各因子起始月份因所需历史长度而不同)
 '''
 
     # 保存报告

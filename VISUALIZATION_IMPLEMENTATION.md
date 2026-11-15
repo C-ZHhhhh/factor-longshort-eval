@@ -230,25 +230,26 @@ python scripts/generate_visualizations.py
 
 ## 🔍 关键发现（从图表中）
 
+> 本节数字于 2026-11-15 按修复后的代码重跑更新 (`python scripts/generate_visualizations.py`)。
+> 旧版写的"Trend 因子 IC 正占比 99.21%"是 IC 计算用到了当月收益造成的, 不是真实的预测能力。
+
 ### 净值曲线对比
-- **Momentum因子**表现最稳定，净值曲线最平滑
-- **LowVolatility因子**波动最大，出现深度回撤
-- 合成因子(Composite)未能超越单因子表现
+- 5 个单因子的多空组合全部是负收益, 没有哪条净值曲线是向上的
+- **LowVolatility因子**跌得最深
+- 合成因子(Composite)没有超过单因子
 
 ### IC时间序列
-- **Trend因子**IC最稳定，99.21%正占比
-- **Momentum因子**IC波动较大，稳定性一般
-- **Liquidity因子**IC持续为负，预测能力较弱
+- 各因子的 IC 正占比: Trend 49.6%、Reversal 48.1%、Momentum 47.5%、LowVolatility 44.6%、Liquidity 37.7%
+- IC 均值都在 0 附近 (-0.03 ~ +0.01), 前四个因子的 t 统计量绝对值都小于 2, 统计上看不出预测能力
+- 现在的 IC 是"本月因子值"和"下个月收益"的相关性
 
 ### 回撤分析
-- **Momentum因子**最大回撤-20.68%，风险可控
-- **LowVolatility因子**最大回撤-68.28%，风险极高
-- 大部分因子经历了2020年初和2022年的深度回撤期
+- 最大回撤: Reversal -14.94%、Trend -26.14%、Momentum -34.94%、Liquidity -39.21%、LowVolatility -69.99%
+- 回撤的起点包含初始净值 (第一个月就亏也算回撤)
 
 ### 因子相关性
-- Momentum与Reversal相关性: -0.524（显著负相关）
-- Trend与其他因子相关性低（0.1~0.3）
-- LowVolatility与Liquidity相关性: 0.387（中度正相关）
+- 动量方向修正后相关性数值已变化, 以重新生成的 `results/figures/factor_correlation_heatmap.png` 为准
+- 注意: 这张热图算的是"各因子每月横截面均值"之间的相关性, 不是同一个月里各因子对股票排序的相关性
 
 ---
 

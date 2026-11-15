@@ -1,5 +1,13 @@
 """
-生成阶段4完成报告
+生成阶段4完成报告 (PORTFOLIO_REPORT.md)
+
+[INPUT]: scripts/test_portfolio.py 的 test_portfolio() 返回的持仓/权重/换手率 (依赖 data/cache 里的缓存)
+[OUTPUT]: 项目根目录的 PORTFOLIO_REPORT.md
+[POS]: 报告生成脚本。报告里的统计数字都从组合数据里计算, 不在这里写死。
+
+[PROTOCOL]:
+1. 逻辑变更时同步更新此头部
+2. 新增展示的数字必须从 results 里计算, 不要手填
 """
 
 import sys
@@ -13,6 +21,7 @@ from datetime import datetime
 
 # 运行组合测试并获取结果
 from test_portfolio import test_portfolio
+from portfolio import Rebalancer
 
 results = test_portfolio()
 
@@ -58,6 +67,13 @@ report = f'''# 阶段4完成报告: 组合构建模块
 holdings = results['holdings']
 weights = results['weights_neutral']
 turnover = results['turnover']
+active_turnover = turnover[turnover > 0]
+
+# 中性化验证和换手率分解用的样本月份 (第11个月 → 第12个月)
+sample_date, next_date = weights.index[10], weights.index[11]
+sample_weights = weights.loc[sample_date]
+avg_long_count = (holdings == 1).sum(axis=1).mean()
+decomp = Rebalancer().decompose_turnover(weights.loc[sample_date], weights.loc[next_date])
 
 report += f'''
 **基本信息**:
@@ -85,11 +101,11 @@ report += f'''
 - ✅ **多头权重和** = +1 (误差 < 1e-10)
 - ✅ **空头权重和** = -1 (误差 < 1e-10)
 
-样本验证（2016-11-30）:
+样本验证（{sample_date.strftime('%Y-%m-%d')}）:
 ```
-总权重和:    0.0000000000
-多头权重和:  1.0000000000
-空头权重和: -1.0000000000
+总权重和:   {sample_weights.sum(): .10f}
+多头权重和: {sample_weights[sample_weights > 0].sum(): .10f}
+空头权重和: {sample_weights[sample_weights < 0].sum(): .10f}
 ```
 
 ---
@@ -143,14 +159,13 @@ TO_total = TO_entry + TO_exit + TO_adjust
 ## 数据质量
 
 ### 权重分布
-- **等权**: 每只股票约占1/95 ≈ 1.05%
+- **等权**: 每只股票约占 1/{avg_long_count:.0f} ≈ {1 / avg_long_count:.2%}
 - **多空对称**: 多头和空头数量相等
-- **无异常权重**: 所有权重在合理范围内
+- **权重范围**: 单只股票权重绝对值最大 {weights.abs().max().max():.2%}
 
-### 换手率合理性
-- **平均46.26%**: 符合月度调仓的正常水平
-- **主要来源**: 新进入/退出各占~35%,权重调整占~2%
-- **符合预期**: 20%分位数选股理论换手率应在40-60%范围
+### 换手率来源
+- **平均换手率**: {active_turnover.mean():.2%} (每月调仓、前后各20%选股)
+- **单月分解** ({sample_date.strftime('%Y-%m')} → {next_date.strftime('%Y-%m')}): 总换手率 {decomp['total']:.2%} = 新进入 {decomp['entry']:.2%} + 退出 {decomp['exit']:.2%} + 权重调整 {decomp['adjust']:.2%}
 
 ---
 

@@ -1,5 +1,13 @@
 """
-生成阶段3完成报告
+生成阶段3完成报告 (FACTOR_REPORT.md)
+
+[INPUT]: scripts/test_factors.py 的 test_factors() 返回的因子数据 (依赖 data/cache 里的缓存)
+[OUTPUT]: 项目根目录的 FACTOR_REPORT.md
+[POS]: 报告生成脚本。报告里的统计数字都从因子数据里计算, 不在这里写死。
+
+[PROTOCOL]:
+1. 逻辑变更时同步更新此头部
+2. 因子定义表要和 factors/ 里的实现保持一致
 """
 
 import sys
@@ -15,6 +23,16 @@ from datetime import datetime
 from test_factors import test_factors
 
 results = test_factors()
+
+
+def missing_rate(df: pd.DataFrame) -> str:
+    return f"{df.isna().sum().sum() / df.size:.2%}"
+
+
+# 标准化验证用的样本截面: 取处理后动量因子的第51个月 (前面的月份历史数据不足)
+_processed_momentum = results['processed_factors']['Momentum']
+_sample_date = _processed_momentum.index[50]
+_sample_values = _processed_momentum.loc[_sample_date].dropna()
 
 # 生成报告
 report = f'''# 阶段3完成报告: 因子计算模块
@@ -35,8 +53,8 @@ report = f'''# 阶段3完成报告: 因子计算模块
 
 | 因子 | 文件 | 定义 | 说明 |
 |------|------|------|------|
-| 动量 | momentum.py | (P_t-12m / P_t-1m) - 1 | 12-1个月动量 |
-| 短期反转 | reversal.py | -R_t-1m | 1个月收益率的负值 |
+| 动量 | momentum.py | (P_t-1m / P_t-12m) - 1 | 12-1个月动量: 过去12个月(跳过最近1个月)的涨幅, 涨得多的排前面 |
+| 短期反转 | reversal.py | -R_t | 当月收益率的负值: 当月跌得多的排前面 |
 | 低波动率 | low_volatility.py | -σ(日收益, 3个月) | 3个月波动率的负值 |
 | 趋势 | trend.py | P_t / MA200(P_t) - 1 | 相对200日均线的偏离 |
 | 流动性 | liquidity.py | log(平均成交额) | 3个月平均成交额 |
@@ -50,6 +68,9 @@ report = f'''# 阶段3完成报告: 因子计算模块
    - 等权平均合成
    - 加权平均合成 (可选)
    - 自动对齐日期和股票
+
+**时间约定**: 第t个月的因子值只用到t月末及之前的数据。"用t月的因子去预测t+1月的收益"
+这一步滞后统一在 `backtest/time_aligner.py` 里做一次, 因子内部不再额外滞后。
 
 ---
 
@@ -95,11 +116,11 @@ report += f'''
 - ✅ **横截面标准差** ≈ 1 (误差 < 1e-6)
 - ✅ **极值处理**: Winsorize到1%和99%分位数
 
-样本验证（2020-03-31）:
-- 均值: 0.000000
-- 标准差: 1.000000
-- 最小值: -1.87
-- 最大值: 3.91
+样本验证（动量因子, {_sample_date.strftime('%Y-%m-%d')}）:
+- 均值: {_sample_values.mean():.6f}
+- 标准差: {_sample_values.std():.6f}
+- 最小值: {_sample_values.min():.2f}
+- 最大值: {_sample_values.max():.2f}
 
 ---
 
@@ -139,14 +160,13 @@ for factor in factors[1:]:
 ## 数据质量
 
 ### 缺失值分析
-- **动量因子**: 0.53% (由于需要12个月历史数据)
-- **反转因子**: 0.29%
-- **低波因子**: 0.50%
-- **趋势因子**: 0.52% (由于需要200天历史数据)
-- **流动性因子**: 0.50%
-- **合成因子**: 0.29% (取交集后改善)
-
-所有缺失率均<1%，数据质量优秀。
+处理后的缺失率:
+- **动量因子**: {missing_rate(results['processed_factors']['Momentum'])} (需要12个月历史数据)
+- **反转因子**: {missing_rate(results['processed_factors']['Reversal'])}
+- **低波因子**: {missing_rate(results['processed_factors']['LowVolatility'])}
+- **趋势因子**: {missing_rate(results['processed_factors']['Trend'])} (需要200天历史数据)
+- **流动性因子**: {missing_rate(results['processed_factors']['Liquidity'])}
+- **合成因子**: {missing_rate(composite)}
 
 ---
 

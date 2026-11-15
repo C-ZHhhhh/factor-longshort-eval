@@ -122,8 +122,9 @@ def main():
     logger.info(f"  初始净值: {nav.iloc[0]:.4f}")
     logger.info(f"  最终净值(含成本): {nav.iloc[-1]:.4f}")
     logger.info(f"  最终净值(不含成本): {nav_no_cost.iloc[-1]:.4f}")
-    logger.info(f"  总收益(含成本): {(nav.iloc[-1] / nav.iloc[0] - 1):.2%}")
-    logger.info(f"  总收益(不含成本): {(nav_no_cost.iloc[-1] / nav_no_cost.iloc[0] - 1):.2%}")
+    # 总收益用metrics里的口径 (包含第一期); nav[-1]/nav[0]-1 会漏掉第一期的收益
+    logger.info(f"  总收益(含成本): {results['metrics']['total_return']:.2%}")
+    logger.info(f"  总收益(不含成本): {results['metrics_no_cost']['total_return']:.2%}")
 
     # 检查净值单调性（不应该有异常跳变）
     nav_pct_change = nav.pct_change().dropna()
@@ -239,6 +240,11 @@ def main():
     logger.info("\n" + "="*70)
     logger.info("回测引擎测试完成！")
     logger.info("="*70)
+
+    # 报告生成脚本(generate_backtest_report.py)需要的背景信息
+    results['n_factor_periods'] = len(df_factor)
+    results['n_stocks'] = df_factor.shape[1]
+    results['weight_sum_max_abs'] = float(weight_sums.abs().max())
 
     return results
 

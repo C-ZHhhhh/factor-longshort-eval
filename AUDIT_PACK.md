@@ -1,5 +1,7 @@
 # AUDIT_PACK.md - 评估层修复与增强审计包
 
+> **⚠️ 阅读前注意 (2026-11-15 补充)**: 本文是 2026-02 开发过程中的记录。文中出现的收益率、Sharpe、回撤、IC 等数字, 是当时还没有真实数据时写的**示例 / 预期输出格式, 不是真实运行结果** (例如"Momentum 年化 9.88%、Sharpe 0.68"从来没有真实出现过)。项目当前的真实结果请看 `README.md` 第 9 节和 `results/`。
+
 **生成时间**: 2026-02-04
 **审计类型**: 代码修复与功能增强验证
 
@@ -408,7 +410,7 @@ class UnifiedEvaluator:
 
 ```bash
 # 从干净环境开始
-cd /Users/zehua/Projects/factor_reg
+cd factor-longshort-eval
 
 # 激活虚拟环境
 source venv/bin/activate

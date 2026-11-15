@@ -62,7 +62,7 @@
 ### 方式1: 直接运行脚本 (推荐)
 
 ```bash
-cd /Users/zehua/Projects/factor_reg
+cd factor-longshort-eval
 
 # 使用uv (推荐)
 uv run python scripts/generate_comprehensive_report.py
