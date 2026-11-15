@@ -17,6 +17,8 @@
 1. 支持任意数量因子对比
 2. 自动运行回测并提取指标
 3. 生成标准化对比表和报告
+4. 任何一个因子回测失败都直接抛出异常, 不捕获后跳过
+   (跳过会让失败的因子从对比表里消失, 看表的人发现不了)
 """
 
 import pandas as pd
@@ -289,23 +291,14 @@ class MultiFactorComparator:
 
         # 1. 单因子回测
         for factor_name in factor_names:
-            try:
-                result = self.run_single_factor(factor_name, df_clean)
-                results[factor_name] = result
-            except Exception as e:
-                logger.error(f"因子 {factor_name} 测试失败: {e}")
-                import traceback
-                traceback.print_exc()
+            # 不捕获异常: 某个因子失败时直接报错停下, 而不是让它从对比表里悄悄消失
+            result = self.run_single_factor(factor_name, df_clean)
+            results[factor_name] = result
 
         # 2. 合成因子回测
         if include_composite:
-            try:
-                result = self.run_composite_factor(df_clean, factor_names)
-                results['Composite'] = result
-            except Exception as e:
-                logger.error(f"合成因子测试失败: {e}")
-                import traceback
-                traceback.print_exc()
+            result = self.run_composite_factor(df_clean, factor_names)
+            results['Composite'] = result
 
         # 3. 生成对比表
         df_comparison = self._create_comparison_table(results)

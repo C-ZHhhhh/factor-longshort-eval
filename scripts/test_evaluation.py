@@ -2,6 +2,15 @@
 评估层测试脚本
 
 测试IC/IR分析、暴露检查、归因分析和稳健性测试
+
+[INPUT]: data/cache 里的缓存数据
+[OUTPUT]: results/EVALUATION_LAYER_TEST_REPORT.md 及若干中间 CSV (都不提交到仓库)
+[POS]: 评估层各模块的冒烟测试脚本, 只跑动量因子。不是正式评估入口。
+
+[PROTOCOL]:
+1. 报告不能写到 results/EVALUATION_REPORT.md: 那是 scripts/run_evaluation.py 生成的正式报告,
+   原来两个脚本写同一个文件, 后跑的会覆盖先跑的。
+2. 逻辑变更时同步更新此头部
 """
 
 import pandas as pd
@@ -434,10 +443,11 @@ def generate_evaluation_report(ic_result, neutrality, balance, attribution, robu
 """
 
     # 保存报告
-    with open('results/EVALUATION_REPORT.md', 'w', encoding='utf-8') as f:
+    report_path = 'results/EVALUATION_LAYER_TEST_REPORT.md'
+    with open(report_path, 'w', encoding='utf-8') as f:
         f.write(report)
 
-    print(f"\n✅ 评估报告已保存到: results/EVALUATION_REPORT.md")
+    print(f"\n✅ 评估报告已保存到: {report_path}")
 
 
 if __name__ == '__main__':
