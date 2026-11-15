@@ -1,6 +1,6 @@
 """
 [INPUT]: evaluation/robustness.py, portfolio/portfolio_builder.py
-[OUTPUT]: 稳健性测试的回归测试 (分位数敏感性每个分位数只跑一组)
+[OUTPUT]: 稳健性测试的回归测试 (分位数敏感性每个分位数只跑一组; 参数组合失败时报错)
 [POS]: 防止"进入阈值和退出阈值被两两组合, 5个分位数跑出25组"再次出现
 
 [PROTOCOL]:
@@ -58,3 +58,12 @@ def test_exit_quantile_below_entry_quantile_is_rejected():
 def test_exit_quantile_equal_to_entry_quantile_is_allowed():
     """进入线 = 退出线(没有缓冲带)是合法配置"""
     PortfolioBuilder(entry_quantile=0.2, exit_quantile=0.2)
+
+
+def test_failing_parameter_combination_raises_instead_of_being_skipped():
+    """某组参数跑不了(这里是退出阈值小于进入阈值)时要报错, 不能悄悄少一行"""
+    df_factor, df_return = _random_panels()
+    param_grid = {"entry_quantile": [0.25], "exit_quantile": [0.30, 0.15]}
+
+    with pytest.raises(ValueError):
+        RobustnessTest().test_parameter_sensitivity(df_factor, df_return, param_grid)

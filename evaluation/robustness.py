@@ -22,6 +22,8 @@
    两个参数需要"成对变化"时(如退出阈值 = 进入阈值 + 5%), 不能把两个列表都塞进
    param_grid, 要像 test_quantile_sensitivity 那样逐对调用
 
+5. 某组参数回测失败时直接抛出异常, 不捕获后跳过。
+
 修复记录:
 - 分位数敏感性原来把进入阈值列表和退出阈值列表一起交给笛卡尔积, 5 个分位数跑出了
   25 组, 其中还有退出阈值比进入阈值更严的无意义组合。现在逐对运行, 每个分位数一行。
@@ -171,39 +173,36 @@ class RobustnessTest:
             params = dict(zip(param_names, combo))
 
             # 回测
-            try:
-                builder = PortfolioBuilder(
-                    entry_quantile=params.get('entry_quantile', 0.25),
-                    exit_quantile=params.get('exit_quantile', 0.30),
-                    min_holding_periods=params.get('min_holding_periods', 12),
-                    long_top=True
-                )
+            # 不捕获异常: 某组参数失败时直接报错, 而不是让这一行从结果表里悄悄消失
+            builder = PortfolioBuilder(
+                entry_quantile=params.get('entry_quantile', 0.25),
+                exit_quantile=params.get('exit_quantile', 0.30),
+                min_holding_periods=params.get('min_holding_periods', 12),
+                long_top=True
+            )
 
-                df_weights = builder.build(df_factor)
+            df_weights = builder.build(df_factor)
 
-                engine = BacktestEngine(
-                    cost_bps=params.get('cost_bps', 20.0),
-                    rebalance_freq=params.get('rebalance_freq', '2monthly')
-                )
+            engine = BacktestEngine(
+                cost_bps=params.get('cost_bps', 20.0),
+                rebalance_freq=params.get('rebalance_freq', '2monthly')
+            )
 
-                backtest_result = engine.run(df_weights, df_return)
+            backtest_result = engine.run(df_weights, df_return)
 
-                # 提取关键指标 - 从嵌套的metrics字典中获取
-                metrics = backtest_result['metrics']
-                row = params.copy()
-                row.update({
-                    'annual_return': metrics['annual_return'],
-                    'sharpe_ratio': metrics['sharpe_ratio'],
-                    'max_drawdown': metrics['max_drawdown'],
-                    'calmar_ratio': metrics['calmar_ratio'],
-                    'avg_turnover': backtest_result['turnover'].mean()
-                })
+            # 提取关键指标 - 从嵌套的metrics字典中获取
+            metrics = backtest_result['metrics']
+            row = params.copy()
+            row.update({
+                'annual_return': metrics['annual_return'],
+                'sharpe_ratio': metrics['sharpe_ratio'],
+                'max_drawdown': metrics['max_drawdown'],
+                'calmar_ratio': metrics['calmar_ratio'],
+                'avg_turnover': backtest_result['turnover'].mean()
+            })
 
-                results.append(row)
+            results.append(row)
 
-            except Exception as e:
-                print(f"参数组合 {params} 回测失败: {e}")
-                continue
 
         result_df = pd.DataFrame(results)
         return result_df

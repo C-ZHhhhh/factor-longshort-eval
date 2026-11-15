@@ -27,6 +27,7 @@ from evaluation.multi_factor_comparison import MultiFactorComparator
 from evaluation.performance_table_generator import PerformanceTableGenerator
 from evaluation.market_exposure_analyzer import MarketExposureAnalyzer
 from evaluation.robustness import RobustnessTest
+from evaluation import report_narrative
 from visualization.factor_visualizer import FactorVisualizer
 from utils.logger import get_logger
 from utils.config import config
@@ -136,67 +137,61 @@ class UnifiedEvaluator:
 
         for factor_name in factor_names:
             logger.info(f"\n回测 {factor_name}...")
-            try:
-                result = self.comparator.run_single_factor(factor_name, df_clean)
-                backtest_results[factor_name] = result
+            # 不捕获异常: 某个因子失败时让整个评估停下来, 而不是让它从结果表里悄悄消失
+            result = self.comparator.run_single_factor(factor_name, df_clean)
+            backtest_results[factor_name] = result
 
-                # 保存因子值用于相关性分析
-                factor_obj = self.comparator.FACTOR_MAP[factor_name]()
-                if factor_name == 'Liquidity':
-                    if 'volume' in df_clean and df_clean['volume'] is not None:
-                        df_factor = factor_obj.calculate(
-                            df_price=df_clean['price'],
-                            df_volume=df_clean['volume']
-                        )
-                    else:
-                        logger.warning(f"{factor_name} 需要成交量数据，跳过")
-                        continue
-                else:
+            # 保存因子值用于相关性分析
+            factor_obj = self.comparator.FACTOR_MAP[factor_name]()
+            if factor_name == 'Liquidity':
+                if 'volume' in df_clean and df_clean['volume'] is not None:
                     df_factor = factor_obj.calculate(
                         df_price=df_clean['price'],
-                        df_return_daily=df_clean.get('daily_return')
+                        df_volume=df_clean['volume']
                     )
-
-                # 标准化
-                from factors.factor_processor import FactorProcessor
-                processor = FactorProcessor()
-                df_factor = processor.winsorize(df_factor)
-                df_factor = processor.zscore_standardize(df_factor)
-                factor_values[factor_name] = df_factor
-
-                # IC分析 (使用 lag=1 确保 factor_t 预测 return_t+1)
-                from evaluation.ic_analysis import ICAnalyzer
-                ic_analyzer = ICAnalyzer()
-
-                # 正确的 IC 计算: factor_t vs return_t+1
-                ic_result = ic_analyzer.analyze_with_lag(
-                    df_factor=df_factor,
-                    df_return=df_clean['monthly_return'],
-                    lag=1  # 因子 shift(1) 后与收益对齐
+                else:
+                    logger.warning(f"{factor_name} 需要成交量数据，跳过")
+                    continue
+            else:
+                df_factor = factor_obj.calculate(
+                    df_price=df_clean['price'],
+                    df_return_daily=df_clean.get('daily_return')
                 )
-                ic_results[factor_name] = ic_result
 
-                # IC Sanity Check: 检测时间对齐错误
-                sanity_result = ic_analyzer.sanity_check_alignment(
-                    df_factor=df_factor,
-                    df_return=df_clean['monthly_return'],
-                    factor_name=factor_name
-                )
-                if 'ic_sanity_checks' not in locals():
-                    ic_sanity_checks = {}
-                ic_sanity_checks[factor_name] = sanity_result
+            # 标准化
+            from factors.factor_processor import FactorProcessor
+            processor = FactorProcessor()
+            df_factor = processor.winsorize(df_factor)
+            df_factor = processor.zscore_standardize(df_factor)
+            factor_values[factor_name] = df_factor
 
-            except Exception as e:
-                logger.error(f"{factor_name} 回测失败: {e}")
-                continue
+            # IC分析 (使用 lag=1 确保 factor_t 预测 return_t+1)
+            from evaluation.ic_analysis import ICAnalyzer
+            ic_analyzer = ICAnalyzer()
+
+            # 正确的 IC 计算: factor_t vs return_t+1
+            ic_result = ic_analyzer.analyze_with_lag(
+                df_factor=df_factor,
+                df_return=df_clean['monthly_return'],
+                lag=1  # 因子 shift(1) 后与收益对齐
+            )
+            ic_results[factor_name] = ic_result
+
+            # IC Sanity Check: 检测时间对齐错误
+            sanity_result = ic_analyzer.sanity_check_alignment(
+                df_factor=df_factor,
+                df_return=df_clean['monthly_return'],
+                factor_name=factor_name
+            )
+            if 'ic_sanity_checks' not in locals():
+                ic_sanity_checks = {}
+            ic_sanity_checks[factor_name] = sanity_result
+
 
         # 合成因子
         logger.info("\n回测 Composite...")
-        try:
-            composite_result = self.comparator.run_composite_factor(df_clean, factor_names)
-            backtest_results['Composite'] = composite_result
-        except Exception as e:
-            logger.error(f"Composite 回测失败: {e}")
+        composite_result = self.comparator.run_composite_factor(df_clean, factor_names)
+        backtest_results['Composite'] = composite_result
 
         # ===== 权重中性化验证 =====
         logger.info("\n" + "="*80)
@@ -742,10 +737,11 @@ class UnifiedEvaluator:
 
         # 1. 最佳策略
         summary_points.append(
-            f"1. **最佳策略**: {best_strategy['factor']} - "
+            f"1. **Sharpe 最高的策略**: {best_strategy['factor']} - "
             f"年化收益 {best_strategy['annual_return_net']:.2%}, "
             f"Sharpe {best_strategy['sharpe']:.4f}, "
             f"最大回撤 {best_strategy['max_drawdown']:.2%}"
+            + ("（仍是负收益）" if best_strategy['annual_return_net'] <= 0 else "")
         )
 
         # 2. 成本影响
@@ -779,10 +775,8 @@ class UnifiedEvaluator:
                 robustness_results['table']['test_type'] == '子样本'
             ]
             if len(sub_sample_data) >= 2:
-                sharpe_std = sub_sample_data['sharpe'].std()
                 summary_points.append(
-                    f"5. **稳健性**: 子样本 Sharpe 标准差 {sharpe_std:.4f} "
-                    f"({'稳定' if sharpe_std < 0.3 else '波动较大'})"
+                    f"5. **稳健性**: {report_narrative.describe_sub_samples(sub_sample_data)}"
                 )
 
         # 6. Composite 表现
@@ -805,121 +799,24 @@ class UnifiedEvaluator:
 
 """
 
+        # 以下三段的定性结论全部由 evaluation/report_narrative.py 根据数字判断得出,
+        # 不在这里写死句子 (写死的句子在数字变了以后会和表格矛盾)
+        exposure_full_sample = (exposure_results or {}).get('full_sample')
+        df_rob = robustness_results['table'] if robustness_results and 'table' in robustness_results else None
+
         # RQ1: 扣成本后是否产生稳定多空收益？
         md += "### RQ1: 扣成本后是否产生稳定的多空收益？\n\n"
-
-        # 引用 performance_table 数据
-        momentum_row = df_performance[df_performance['factor'] == 'Momentum'].iloc[0] if 'Momentum' in df_performance['factor'].values else None
-
-        if momentum_row is not None:
-            momentum_ret = momentum_row['annual_return_net']
-            momentum_sharpe = momentum_row['sharpe']
-
-            # 检查显著性
-            momentum_sig = significance_results.get('Momentum', {}).get('returns', {})
-            t_stat = momentum_sig.get('t_stat', 0.0)
-            p_value = momentum_sig.get('p_value', 1.0)
-
-            md += f"扣除交易成本后，**仅 Momentum 因子实现小幅正收益** (年化 {momentum_ret:.2%}, Sharpe={momentum_sharpe:.4f})，但统计检验显示其不具显著性 (t-stat={t_stat:.2f}, p={p_value:.3f} > 0.05)。\n\n"
-            md += "**年化收益口径**: 全样本与子样本均采用 **CAGR (Compound Annual Growth Rate)** 计算，公式为 `(1 + total_return)^(1/n_years) - 1`，确保样本间可比性。显著性检验针对'月度净收益序列'的均值，与 CAGR 不同但相互印证。"
-        else:
-            md += "Momentum 因子数据缺失。"
-
-        md += "其余因子（Reversal, LowVolatility, Trend, Composite）在扣成本后均为负收益："
-
-        # 列出负收益因子
-        for _, row in df_performance.iterrows():
-            if row['factor'] != 'Momentum' and row['annual_return_net'] < 0:
-                md += f"\n- **{row['factor']}**: 年化 {row['annual_return_net']:.2%}, Sharpe={row['sharpe']:.4f}"
-
-        md += f"\n\n**统计检验** (见 [significance_summary.md](significance_summary.md)): "
-
-        # 统计显著性结果
-        sig_positive = []  # 显著且正收益
-        sig_negative = []  # 显著但负收益
-        not_sig = []       # 不显著
-
-        for factor_name, sig_data in significance_results.items():
-            if 'returns' not in sig_data:
-                continue
-            ret_stats = sig_data['returns']
-            mean_ret = ret_stats.get('mean', 0)
-            nw_p = ret_stats.get('nw_p_value', 1.0)
-
-            if nw_p < 0.05:
-                if mean_ret > 0:
-                    sig_positive.append(factor_name)
-                else:
-                    sig_negative.append(factor_name)
-            else:
-                not_sig.append(factor_name)
-
-        # 描述检验结果
-        if len(sig_positive) == 0 and len(sig_negative) > 0:
-            md += f"Newey-West 检验显示，{len(sig_negative)} 个因子（{', '.join(sig_negative)}）通过 5% 显著性水平，但**均为负收益**，不支持稳定正收益假设。"
-        elif len(sig_positive) == 0:
-            md += "所有因子月度净收益的 Newey-West 检验均未通过 5% 显著性水平（或虽显著但为负收益），表明收益缺乏统计可靠性。"
-        else:
-            md += f"{len(sig_positive)} 个因子（{', '.join(sig_positive)}）通过显著性检验且为正收益。"
-
-        md += "\n\n"
-        md += "**结论**: 当前因子在样本期内**未能稳定产生超额收益**，Momentum 的小幅正收益缺乏统计显著性支撑。\n\n"
+        md += report_narrative.describe_net_returns(df_performance, significance_results)
 
         # RQ2: 稳健性如何？
         md += "### RQ2: 因子表现的稳健性如何？\n\n"
+        if df_rob is not None:
+            md += report_narrative.describe_robustness(df_rob, cost_bps=self.cost_bps)
 
-        if robustness_results and 'table' in robustness_results:
-            df_rob = robustness_results['table']
-
-            # 子样本测试
-            sub_sample_data = df_rob[df_rob['test_type'] == '子样本']
-            if len(sub_sample_data) >= 2:
-                md += "**子样本稳健性** (见 [robustness_table.md](robustness_table.md)):\n\n"
-                md += "**说明**: 以下为 Momentum 因子在不同子样本的 **净收益表现 (扣除 20bps 成本)**\n\n"
-                md += "| 时间段 | 年化收益 (净) | Sharpe (净) |\n"
-                md += "|--------|--------------|-------------|\n"
-                for _, row in sub_sample_data.iterrows():
-                    md += f"| {row['parameter']} | {row['annual_return']:.2%} | {row['sharpe']:.4f} |\n"
-
-                sharpe_range = sub_sample_data['sharpe'].max() - sub_sample_data['sharpe'].min()
-                md += f"\n子样本 Sharpe 波动范围为 {sharpe_range:.4f}，表现在不同时期**差异较大**，稳健性有限。\n\n"
-
-            # 成本敏感性
-            cost_sens_data = df_rob[df_rob['test_type'] == '成本敏感性']
-            if len(cost_sens_data) > 0:
-                md += "**成本敏感性**:\n\n"
-
-                # 找到 30bps 的数据
-                cost_30bps = cost_sens_data[cost_sens_data['parameter'].str.contains('30')]
-                if len(cost_30bps) > 0:
-                    ret_30 = cost_30bps.iloc[0]['annual_return']
-                    md += f"- 当交易成本升至 **30 bps** 时，Momentum 年化收益降至 **{ret_30:.2%}**"
-                    if ret_30 < 0:
-                        md += " (转为负值)"
-                    md += "\n"
-
-                md += "- 因子收益对交易成本高度敏感，实际交易中需严格控制成本\n\n"
-
-        md += "**结论**: 因子表现**缺乏时间稳健性**，在不同子样本和成本假设下差异明显，实盘可靠性存疑。\n\n"
-
-        # Caveat: Beta 暴露
+        # Caveat: Beta 暴露 + 最终结论
         md += "### 重要说明 (Caveat)\n\n"
-
-        if exposure_results and 'full_sample' in exposure_results:
-            if 'Momentum' in exposure_results['full_sample']:
-                momentum_beta = exposure_results['full_sample']['Momentum']['beta']
-                momentum_alpha = exposure_results['full_sample']['Momentum']['alpha']
-                momentum_r2 = exposure_results['full_sample']['Momentum']['r_squared']
-
-                md += f"当前策略为 **Dollar-Neutral (资金中性)** 但 **非 Beta-Neutral (市场中性)**。"
-                md += f"Momentum 因子的市场 Beta 为 **{momentum_beta:.4f}** (超过 0.1 阈值)，R²={momentum_r2:.2%}，"
-                md += f"说明其收益中**包含约 {momentum_r2:.1%} 的市场暴露成分**，而非纯粹的选股 Alpha。\n\n"
-
-                md += f"**OLS 回归结果**: Alpha={momentum_alpha:.4f} (见 [exposure_summary.md](exposure_summary.md))。"
-                md += f"这表明扣除市场暴露后，Momentum 的纯因子收益 (Alpha) **接近零甚至为负**，进一步削弱了其有效性证据。\n\n"
-
-        md += "**最终结论**: 基于以上分析，本研究仅提供 **弱证据 (weak evidence)**，支持因子在当前配置下产生稳定超额收益。"
-        md += "**需进一步实施 Beta-Neutral 中性化** 并在更长样本期、多市场环境下验证，方可得出可靠结论。\n\n"
+        md += report_narrative.describe_exposure_caveat(exposure_full_sample)
+        md += report_narrative.final_conclusion(df_performance, significance_results, exposure_full_sample)
 
         md += """
 ---
@@ -955,8 +852,8 @@ class UnifiedEvaluator:
         # 最佳/最差策略对比
         worst_strategy = df_performance.iloc[-1]
         observations.append(
-            f"- **性能差异**: 最佳策略 ({best_strategy['factor']}, Sharpe={best_strategy['sharpe']:.4f}) "
-            f"vs 最差策略 ({worst_strategy['factor']}, Sharpe={worst_strategy['sharpe']:.4f}), "
+            f"- **性能差异**: Sharpe 最高 ({best_strategy['factor']}, Sharpe={best_strategy['sharpe']:.4f}) "
+            f"vs Sharpe 最低 ({worst_strategy['factor']}, Sharpe={worst_strategy['sharpe']:.4f}), "
             f"差距 {best_strategy['sharpe'] - worst_strategy['sharpe']:.4f}"
         )
 
@@ -1012,10 +909,17 @@ class UnifiedEvaluator:
 
             md += "\n"
 
-            if composite_row['sharpe'] > best_strategy['sharpe']:
-                md += "**结论**: Composite 因子成功提升了 Sharpe 比率，多因子组合有效。\n\n"
+            single_factors = df_performance[df_performance['factor'] != 'Composite']
+            best_single = single_factors.iloc[0]
+            n_beaten = int((composite_row['sharpe'] > single_factors['sharpe']).sum())
+            if composite_row['sharpe'] > best_single['sharpe']:
+                md += "**结论**: Composite 的 Sharpe 高于所有单因子。"
             else:
-                md += "**结论**: Composite 因子未能超越最佳单因子，建议优化合成方法或仅使用表现最好的因子。\n\n"
+                md += (f"**结论**: Composite 的 Sharpe 只高于 {n_beaten}/{len(single_factors)} 个单因子，"
+                       f"没有超过 Sharpe 最高的单因子 ({best_single['factor']})，等权合成没有带来分散化的好处。")
+            if composite_row['annual_return_net'] <= 0:
+                md += "Composite 本身扣成本后也是负收益。"
+            md += "\n\n"
         else:
             md += "未包含 Composite 因子。\n\n"
 
@@ -1047,8 +951,7 @@ class UnifiedEvaluator:
                         f"| {row['max_drawdown']:.2%} |\n"
                     )
 
-                sharpe_diff = sub_sample_data['sharpe'].max() - sub_sample_data['sharpe'].min()
-                md += f"\n**Sharpe 差异**: {sharpe_diff:.4f} ({'稳定' if sharpe_diff < 0.3 else '波动较大'})\n\n"
+                md += f"\n{report_narrative.describe_sub_samples(sub_sample_data)}\n\n"
 
             # 成本敏感性
             cost_sens_data = df_rob[df_rob['test_type'] == '成本敏感性']
@@ -1067,9 +970,7 @@ class UnifiedEvaluator:
                         f"| {change_str} |\n"
                     )
 
-                cost_sensitivity = (cost_sens_data.iloc[-1]['annual_return'] -
-                                  cost_sens_data.iloc[0]['annual_return']) / 4  # 假设成本范围40bps
-                md += f"\n**成本敏感性**: 每增加10bps，年化收益下降约 {abs(cost_sensitivity):.2%}\n\n"
+                md += "\n" + report_narrative.describe_cost_sensitivity(cost_sens_data) + "\n"
 
         md += """
 ---
@@ -1114,7 +1015,8 @@ class UnifiedEvaluator:
             elif avg_beta < 0.1:
                 md += "策略基本实现市场中性，少量市场暴露在可接受范围内。\n\n"
             else:
-                md += "⚠️  策略存在较大市场暴露，需优化中性化逻辑。\n\n"
+                md += ("⚠️  策略存在较大市场暴露。权重本身是资金中性的 (多空金额相等)，"
+                       "但资金中性不等于 Beta 中性，要消除市场暴露需要额外做 Beta 对冲。\n\n")
 
         md += """
 ---
@@ -1125,56 +1027,52 @@ class UnifiedEvaluator:
 
 """
 
+        # 每条建议都有触发条件; 编号按实际出现的顺序生成, 不写死
         suggestions = []
+        level = report_narrative.evidence_level(df_performance, significance_results)
 
-        # 1. 成本优化
+        # 没有因子为正收益时, 调参数不是出路
+        if level == 'none':
+            suggestions.append("""**不要靠调参数"找出"正收益**
+   - 所有策略扣成本后都是负的，在同一段历史上反复换参数直到出现正收益，只是事后挑选
+   - 更值得做的是检查结论的前提（见下面几条），而不是优化这组因子""")
+
+        # 成本优化
         if avg_cost_drag < -0.03:
-            suggestions.append("""1. **降低交易成本**
+            suggestions.append("""**降低交易成本**
    - 当前成本拖累较大，建议降低调仓频率
    - 考虑增加最小持有期限制
    - 扩大进出阈值差距以减少频繁交易""")
 
-        # 2. 市场暴露优化
-        if exposure_results and 'full_sample' in exposure_results:
+        # 市场暴露
+        if exposure_full_sample:
             high_beta_strategies = [
-                name for name, stats in exposure_results['full_sample'].items()
-                if abs(stats['beta']) > 0.1
+                name for name, stats in exposure_full_sample.items()
+                if abs(stats['beta']) > report_narrative.BETA_THRESHOLD
             ]
             if high_beta_strategies:
-                suggestions.append(f"""2. **优化市场中性化**
-   - 以下策略Beta超标: {', '.join(high_beta_strategies)}
-   - 检查权重归一化逻辑
-   - 考虑添加市场对冲头寸""")
+                suggestions.append(f"""**实施 Beta 中性化**
+   - 以下策略 Beta 超标: {', '.join(high_beta_strategies)}
+   - 资金中性不保证 Beta 为 0，需要额外加市场对冲头寸
+   - 对冲后才能分清收益来自因子还是来自大盘""")
 
-        # 3. Composite 优化
-        if 'Composite' in df_performance['factor'].values:
-            if composite_row['sharpe'] < best_strategy['sharpe']:
-                suggestions.append("""3. **优化因子合成**
-   - 当前等权合成未能提升表现
-   - 建议使用 Sharpe 加权或 IC 加权
-   - 仅合成表现较好的因子""")
+        # 幸存者偏差 (与数据无关, 始终成立)
+        suggestions.append("""**使用历史成分股**
+   - 当前股票池是今天的 S&P 500 成分股，存在幸存者偏差
+   - 换成各个时点的历史成分股后结论才可靠""")
 
-        # 4. 稳健性提升
-        if robustness_results and 'table' in robustness_results:
-            sub_sample_data = robustness_results['table'][
-                robustness_results['table']['test_type'] == '子样本'
-            ]
+        # 子样本差异
+        if df_rob is not None:
+            sub_sample_data = df_rob[df_rob['test_type'] == '子样本']
             if len(sub_sample_data) >= 2:
-                sharpe_std = sub_sample_data['sharpe'].std()
-                if sharpe_std > 0.3:
-                    suggestions.append("""4. **提升稳健性**
-   - 子样本表现差异较大
-   - 考虑增加更多历史数据验证
-   - 探索时变因子权重方法""")
+                sharpe_range = sub_sample_data['sharpe'].max() - sub_sample_data['sharpe'].min()
+                if sharpe_range >= report_narrative.SHARPE_RANGE_THRESHOLD:
+                    suggestions.append("""**检查不同时期的差异**
+   - 子样本 Sharpe 差异较大
+   - 考虑增加更多历史数据验证""")
 
-        if not suggestions:
-            suggestions.append("""✅ **当前策略表现优异**
-   - 保持现有配置
-   - 继续监控实盘表现
-   - 定期更新评估报告""")
-
-        for suggestion in suggestions:
-            md += f"{suggestion}\n\n"
+        for number, suggestion in enumerate(suggestions, 1):
+            md += f"{number}. {suggestion}\n\n"
 
         md += f"""
 ---
@@ -1365,24 +1263,20 @@ class UnifiedEvaluator:
                 p_value = np.nan
 
             # Newey-West t-statistic (lag=6, 约半年)
-            try:
-                from statsmodels.regression.linear_model import OLS
+            # 不捕获异常: 算不出来就报错, 不用 NaN 顶替 (NaN 会被后面的结论当成"不显著")
+            from statsmodels.regression.linear_model import OLS
 
-                # 简单回归: return_t = alpha + epsilon
-                y = returns.values
-                X = np.ones((len(y), 1))  # 只有常数项
+            # 简单回归: return_t = alpha + epsilon
+            y = returns.values
+            X = np.ones((len(y), 1))  # 只有常数项
 
-                # 使用 HAC (Heteroskedasticity and Autocorrelation Consistent) 标准误
-                model = OLS(y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 6})
+            # 使用 HAC (Heteroskedasticity and Autocorrelation Consistent) 标准误
+            model = OLS(y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 6})
 
-                nw_t_stat = model.tvalues[0]
-                nw_p_value = model.pvalues[0]
+            nw_t_stat = model.tvalues[0]
+            nw_p_value = model.pvalues[0]
 
-                logger.info(f"  Newey-West 计算成功: t={nw_t_stat:.4f}, p={nw_p_value:.4f}")
-            except Exception as e:
-                logger.warning(f"Newey-West 计算失败: {e}")
-                nw_t_stat = np.nan
-                nw_p_value = np.nan
+            logger.info(f"  Newey-West 计算成功: t={nw_t_stat:.4f}, p={nw_p_value:.4f}")
 
             sig_results[factor_name] = {
                 'returns': {
