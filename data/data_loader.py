@@ -14,6 +14,11 @@
 1. 从缓存加载数据
 2. 如果缓存不存在，抛出错误
 3. 向后兼容旧缓存（可能没有volume）
+
+[UPDATE 2026-11-15]:
+- 新增 latest_cache_file(): "用哪个缓存文件"的唯一入口。脚本不要再写死
+  clean_data_<日期>_<数量>.pkl 这种文件名（换一天下载文件名就变了）。
+- 默认缓存目录改为相对项目根目录（data/cache），不再依赖从哪个目录启动脚本。
 """
 
 import pandas as pd
@@ -25,8 +30,32 @@ from typing import Optional
 class DataLoader:
     """数据加载器"""
 
-    def __init__(self, cache_dir: str = 'data/cache'):
+    def __init__(self, cache_dir: Optional[str] = None):
+        """
+        Args:
+            cache_dir: 缓存目录，默认是项目下的 data/cache
+        """
+        if cache_dir is None:
+            cache_dir = Path(__file__).parent / 'cache'
         self.cache_dir = Path(cache_dir)
+
+    def latest_cache_file(self) -> Path:
+        """
+        找到最新的清洗数据缓存文件
+
+        Returns:
+            修改时间最新的 clean_data_*.pkl 的路径
+
+        Raises:
+            FileNotFoundError: 缓存目录里没有任何缓存文件
+        """
+        cache_files = list(self.cache_dir.glob('clean_data_*.pkl'))
+        if not cache_files:
+            raise FileNotFoundError(
+                f"未找到缓存数据文件: {self.cache_dir}\n"
+                f"请先运行: python scripts/download_data.py"
+            )
+        return max(cache_files, key=lambda p: p.stat().st_mtime)
 
     def load_cleaned_data(self, cache_file: Optional[str] = None):
         """
@@ -44,13 +73,7 @@ class DataLoader:
             注意: 旧缓存可能没有'volume'键
         """
         if cache_file is None:
-            # 查找最新的缓存文件
-            cache_files = list(self.cache_dir.glob('clean_data_*.pkl'))
-            if not cache_files:
-                raise FileNotFoundError(f"未找到缓存数据文件: {self.cache_dir}")
-
-            # 按修改时间排序，取最新的
-            cache_file = max(cache_files, key=lambda p: p.stat().st_mtime)
+            cache_file = self.latest_cache_file()
         else:
             cache_file = self.cache_dir / cache_file
 

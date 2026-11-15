@@ -22,6 +22,7 @@ from factors import (
     FactorCombiner,
 )
 from utils.logger import get_logger
+from data.data_loader import DataLoader
 
 logger = get_logger(__name__)
 
@@ -35,19 +36,21 @@ def test_factors():
 
     # 1. 加载数据
     logger.info("\n1. 加载数据...")
-    cache_file = 'data/cache/clean_data_2015-01-01_2026-02-03_503_dedup.pkl'
+    cache_file = DataLoader().latest_cache_file()  # 最新的缓存文件, 不写死文件名
     cache_data = pd.read_pickle(cache_file)
 
     df_price = cache_data['price']
     df_return_daily = cache_data['return_daily']
 
-    # 计算成交量（从价格反推，实际应该从data_cleaner获取）
-    # 这里简化：假设成交量恒定（仅用于测试）
-    df_volume = pd.DataFrame(
-        100000.0,  # 假设恒定成交量
-        index=df_price.index,
-        columns=df_price.columns
-    )
+    # 成交量用缓存里的真实数据; 旧缓存没有时退回恒定值(仅保证能跑, 此时流动性因子没有意义)
+    df_volume = cache_data.get('volume')
+    if df_volume is None:
+        logger.warning("缓存中没有成交量数据, 使用恒定成交量, 流动性因子结果无意义")
+        df_volume = pd.DataFrame(
+            100000.0,
+            index=df_price.index,
+            columns=df_price.columns
+        )
 
     logger.info(f"价格数据: {df_price.shape}")
     logger.info(f"日收益率: {df_return_daily.shape}")

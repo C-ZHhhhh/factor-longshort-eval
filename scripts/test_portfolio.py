@@ -21,6 +21,7 @@ from portfolio import (
 )
 from factors import MomentumFactor, FactorProcessor
 from utils.logger import get_logger
+from data.data_loader import DataLoader
 
 logger = get_logger(__name__)
 
@@ -34,7 +35,7 @@ def test_portfolio():
 
     # 1. 加载数据并计算因子
     logger.info("\n1. 加载数据...")
-    cache_file = 'data/cache/clean_data_2015-01-01_2026-02-03_503_dedup.pkl'
+    cache_file = DataLoader().latest_cache_file()  # 最新的缓存文件, 不写死文件名
     cache_data = pd.read_pickle(cache_file)
     df_price = cache_data['price']
 
@@ -53,8 +54,9 @@ def test_portfolio():
 
     # 3. 测试组合构建器
     logger.info("\n3. 测试组合构建器...")
-    builder = PortfolioBuilder(quantile=0.2, long_top=True)
-    df_holdings = builder.build(df_momentum_processed)
+    # 普通的前20%/后20%组合: 进入=退出阈值, 不设最小持有期; neutralize=False返回持仓标记(+1/-1/0)
+    builder = PortfolioBuilder(entry_quantile=0.2, exit_quantile=0.2, min_holding_periods=1, long_top=True)
+    df_holdings = builder.build(df_momentum_processed, neutralize=False)
 
     logger.info(f"持仓标记: {df_holdings.shape}")
     logger.info(f"样本持仓:\n{df_holdings.iloc[:3, :5]}")

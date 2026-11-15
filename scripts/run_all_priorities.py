@@ -158,7 +158,7 @@ def test_priority2_multi_factor():
 
     # 运行Priority 2脚本
     result = subprocess.run(
-        ['python', 'scripts/priority2_multi_factor.py'],
+        [sys.executable, 'scripts/priority2_multi_factor.py'],
         cwd=project_root,
         capture_output=False
     )
@@ -183,7 +183,7 @@ def test_priority3_robustness():
 
     # 运行Priority 3脚本
     result = subprocess.run(
-        ['python', 'scripts/priority3_robustness.py'],
+        [sys.executable, 'scripts/priority3_robustness.py'],
         cwd=project_root,
         capture_output=False
     )
@@ -272,6 +272,10 @@ def main():
             print(f"  ✅ {file}")
         else:
             print(f"  ⚠️  {file} (未生成)")
+
+    # 有任务失败时退出码非0, 不要让出错的运行看起来像成功
+    if not all(results.values()):
+        sys.exit(1)
 
 
 if __name__ == '__main__':

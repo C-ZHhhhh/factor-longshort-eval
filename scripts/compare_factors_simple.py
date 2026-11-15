@@ -24,7 +24,7 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from data.data_loader import load_clean_data
+from data import load_clean_data
 from evaluation.multi_factor_comparison import MultiFactorComparator
 from utils.logger import get_logger
 

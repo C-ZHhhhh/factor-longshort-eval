@@ -10,10 +10,12 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from data.data_loader import DataLoader
+
 
 def generate_report():
     # 加载数据
-    cache_file = 'data/cache/clean_data_2015-01-01_2026-02-03_503_dedup.pkl'
+    cache_file = DataLoader().latest_cache_file()  # 最新的缓存文件, 不写死文件名
     cache_data = pd.read_pickle(cache_file)
     df_price = cache_data['price']
     df_return_daily = cache_data['return_daily']
