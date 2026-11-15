@@ -257,19 +257,24 @@ class UnifiedEvaluator:
             for name, result in backtest_results.items()
         }
 
-        # 使用 SPY 作为市场基准（如果有的话）
-        if 'SPY' in df_clean:
+        # 使用 SPY 作为市场基准; 缓存里没有SPY时退回股票池等权平均, 并在报告里如实标注
+        if df_clean.get('SPY') is not None:
             market_returns = df_clean['SPY']
+            benchmark_name = 'SPY'
         else:
-            # 或者使用市场等权组合
-            logger.warning("未找到SPY数据，使用股票等权组合作为市场基准")
+            logger.warning(
+                "未找到SPY数据(旧缓存?)，使用股票池等权平均作为市场基准。"
+                "重新运行 scripts/download_data.py --no-cache 可下载SPY"
+            )
             market_returns = df_clean['monthly_return'].mean(axis=1)
+            benchmark_name = '股票池等权平均 (缓存中没有SPY数据, 非SPY)'
 
         exposure_results = self.market_exposure_analyzer.analyze_market_exposure(
             strategy_returns=strategy_returns,
             market_returns=market_returns,
             output_dir=output_dir,
-            rolling_window=12
+            rolling_window=12,
+            benchmark_name=benchmark_name
         )
 
         # ===== 第5步：稳健性测试 =====
@@ -1609,7 +1614,8 @@ class UnifiedEvaluator:
         full_start = full_nav.index[0]
         full_end = full_nav.index[-1]
         full_n_months = len(full_nav)
-        full_total_return = full_nav.iloc[-1] / full_nav.iloc[0] - 1
+        # 从收益率序列算总收益（nav[0]已含第一期收益, 用nav[-1]/nav[0]会漏掉第一期）
+        full_total_return = (1 + full_result['returns']).prod() - 1
         full_n_years = full_n_months / 12
         full_cagr = (1 + full_total_return) ** (1 / full_n_years) - 1
 
@@ -1651,7 +1657,7 @@ class UnifiedEvaluator:
                     sub_start = sub_nav.index[0]
                     sub_end = sub_nav.index[-1]
                     sub_n_months = len(sub_nav)
-                    sub_total_return = sub_nav.iloc[-1] / sub_nav.iloc[0] - 1
+                    sub_total_return = (1 + period_result['returns']).prod() - 1
                     sub_n_years = sub_n_months / 12
                     sub_cagr = (1 + sub_total_return) ** (1 / sub_n_years) - 1
 

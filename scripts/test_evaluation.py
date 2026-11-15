@@ -53,7 +53,7 @@ def test_ic_analysis():
 
     # IC分析
     analyzer = ICAnalyzer()
-    ic_result = analyzer.analyze(df_factor, df_return)
+    ic_result = analyzer.analyze_with_lag(df_factor, df_return, lag=1)  # factor_t 预测 return_t+1
 
     print("\n📊 IC/IR分析结果:")
     print(f"IC均值: {ic_result['ic_mean']:.4f}")

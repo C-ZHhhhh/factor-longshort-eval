@@ -10,7 +10,7 @@
 
 import pandas as pd
 from datetime import datetime
-from typing import Union, List
+from typing import Optional, Union, List
 
 
 def parse_date(date: Union[str, datetime, pd.Timestamp]) -> pd.Timestamp:
@@ -104,3 +104,38 @@ def get_month_start_end(date: Union[str, pd.Timestamp]) -> tuple:
     month_end = (month_start + pd.DateOffset(months=1)) - pd.Timedelta(days=1)
 
     return month_start, month_end
+
+
+def is_month_complete(
+    last_data_date: Union[str, datetime, pd.Timestamp],
+    requested_end: Optional[Union[str, datetime, pd.Timestamp]] = None
+) -> bool:
+    """
+    判断最后一条数据所在的月份是否已经走完
+
+    用途: 月中下载数据时, 最后一个月只有几个交易日, 不能当成完整的一个月来算月收益。
+
+    判定为完整的条件(满足其一):
+    1. 请求的结束日期(不含)已经到了下个月 —— 说明这个月的交易日都请求过了
+    2. 最后一条数据之后, 本月已没有工作日(周一到周五) —— 剩下的只有周末
+
+    不考虑节假日, 所以判断是保守的: 只会把"其实完整的月"误判为不完整
+    (例如月末最后一个工作日恰好休市), 不会把不完整的月当成完整。
+
+    Args:
+        last_data_date: 最后一条数据的日期
+        requested_end: 下载时请求的结束日期(不含当天, 与yfinance的end语义一致), 可选
+
+    Returns:
+        该月是否完整
+    """
+    last_data_date = pd.Timestamp(last_data_date).normalize()
+    month_end = last_data_date + pd.offsets.MonthEnd(0)
+
+    if requested_end is not None and pd.Timestamp(requested_end).normalize() > month_end:
+        return True
+
+    remaining_business_days = pd.bdate_range(
+        last_data_date + pd.Timedelta(days=1), month_end
+    )
+    return len(remaining_business_days) == 0

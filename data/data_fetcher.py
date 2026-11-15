@@ -69,8 +69,9 @@ class YFinanceFetcher:
             )
 
             # 处理下载结果
-            if len(tickers) == 1:
-                # 单个ticker,数据格式不同
+            if len(tickers) == 1 and not isinstance(data.columns, pd.MultiIndex):
+                # 单个ticker且列是扁平的(旧版yfinance): 整张表就是这只股票
+                # 新版yfinance即使只有一只也返回(ticker, 字段)两层列, 走下面的通用分支
                 ticker = tickers[0]
                 if not data.empty:
                     results[ticker] = data

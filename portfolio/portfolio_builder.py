@@ -11,11 +11,17 @@
 - 添加进入/退出阈值逻辑: 买入Top 25%, 卖出需掉出Top 30%
 - 添加最小持有期约束: 新进股票必须持有N期才能卖出
 - build方法从无状态改为有状态(需要记录上期持仓和持有期)
+
+[UPDATE 2026-11-15]:
+- 修复同一只股票同时出现在多头和空头名单: 原实现多空两侧各自独立决策,
+  被最小持有期锁住的多头掉到空头进入区时会被同时做空(空头标记覆盖多头)。
+- 现在两侧一起决策: 一侧仍在持有的股票, 另一侧不允许新开仓, 等它退出后才能反向进入。
+- 多空两侧共用同一套 保留/进入 逻辑(_entry_and_exit_zones/_retain/_enter), 不再复制两份。
 """
 
 import pandas as pd
 import numpy as np
-from typing import Optional, Dict
+from typing import Dict, List, Optional, Set, Tuple
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -48,6 +54,10 @@ class PortfolioBuilder:
             min_holding_periods: 最小持有期(月数), 默认6个月
             long_top: 是否做多因子值高的股票, 默认True
         """
+        if not 0 < entry_quantile <= 0.5:
+            # 超过50%时多头进入区和空头进入区会重叠, 同一只股票会被同时做多和做空
+            raise ValueError(f"entry_quantile必须在(0, 0.5]之间, 当前为{entry_quantile}")
+
         self.entry_quantile = entry_quantile
         self.exit_quantile = exit_quantile
         self.min_holding_periods = min_holding_periods
@@ -104,9 +114,15 @@ class PortfolioBuilder:
                     df_holdings.loc[date, self.prev_holdings_short] = -1
                 continue
 
-            # 对多头和空头分别处理
-            long_holdings = self._build_long_side(date, valid_values, i)
-            short_holdings = self._build_short_side(date, valid_values, i)
+            # 多头和空头一起决策（保证同一只股票不会同时在两侧）
+            long_holdings, short_holdings = self._build_sides(valid_values)
+
+            overlap = set(long_holdings) & set(short_holdings)
+            if overlap:
+                raise RuntimeError(
+                    f"日期 {date}: {len(overlap)} 只股票同时在多头和空头名单中: "
+                    f"{sorted(overlap)[:5]}"
+                )
 
             # 更新持仓标记
             df_holdings.loc[date, long_holdings] = 1
@@ -141,182 +157,133 @@ class PortfolioBuilder:
         else:
             return df_holdings
 
-    def _build_long_side(
-        self,
-        date: pd.Timestamp,
-        valid_values: pd.Series,
-        period_index: int
-    ) -> list:
+    def _build_sides(self, valid_values: pd.Series) -> Tuple[List[str], List[str]]:
         """
-        构建多头持仓（带进出阈值和最小持有期约束）
+        同时构建多头和空头持仓（带进出阈值和最小持有期约束）
 
         逻辑:
-        1. 计算进入/退出阈值
-        2. 判断每只股票: 新进/保持/退出
-        3. 更新持有期
+        1. 两侧各自决定上期持仓中哪些继续持有（仍在退出阈值内, 或未满最小持有期）
+        2. 两侧各自从进入候选中新开仓, 但跳过另一侧仍在持有的股票
+           （否则被最小持有期锁住的多头会被同时做空）
 
         Args:
-            date: 当前日期
-            valid_values: 当前因子值
-            period_index: 当前是第几期
+            valid_values: 当期有效因子值（已去除缺失）
 
         Returns:
-            多头持仓股票列表
+            (多头持仓列表, 空头持仓列表), 两者不相交
         """
-        # 排序
-        sorted_values = valid_values.sort_values(ascending=False)
+        long_entry, long_exit_zone = self._entry_and_exit_zones(valid_values, 'long')
+        short_entry, short_exit_zone = self._entry_and_exit_zones(valid_values, 'short')
 
-        # 计算分位数阈值
-        n_stocks = len(sorted_values)
+        # 1. 上期持仓中继续持有的部分（第一期没有上期持仓）
+        retained_long = self._retain(
+            self.prev_holdings_long or [], self.holding_periods_long, long_exit_zone
+        )
+        retained_short = self._retain(
+            self.prev_holdings_short or [], self.holding_periods_short, short_exit_zone
+        )
 
-        if self.long_top:
-            # 做多高因子值: Top 25%进入, Top 30%退出
-            entry_rank = int(n_stocks * self.entry_quantile)
-            exit_rank = int(n_stocks * self.exit_quantile)
+        # 2. 新开仓: 另一侧仍持有的股票不允许反向进入
+        long_holdings = self._enter(
+            retained_long, long_entry, set(retained_short), self.holding_periods_long
+        )
+        short_holdings = self._enter(
+            retained_short, short_entry, set(retained_long), self.holding_periods_short
+        )
 
-            # 候选股票（排名靠前）
-            entry_candidates = sorted_values.head(entry_rank).index.tolist()
-            exit_threshold_stocks = sorted_values.head(exit_rank).index.tolist()
-        else:
-            # 做多低因子值: Bottom 25%进入, Bottom 30%退出
-            entry_rank = int(n_stocks * self.entry_quantile)
-            exit_rank = int(n_stocks * self.exit_quantile)
+        return long_holdings, short_holdings
 
-            entry_candidates = sorted_values.tail(entry_rank).index.tolist()
-            exit_threshold_stocks = sorted_values.tail(exit_rank).index.tolist()
-
-        # 第一期: 直接买入候选股票
-        if self.prev_holdings_long is None:
-            new_holdings = entry_candidates
-            # 初始化持有期
-            for ticker in new_holdings:
-                self.holding_periods_long[ticker] = 1
-            return new_holdings
-
-        # 非第一期: 应用进出阈值和最小持有期约束
-        new_holdings = []
-
-        # 1. 遍历上期持仓，判断是否继续持有
-        for ticker in self.prev_holdings_long:
-            # 检查是否仍在退出阈值内
-            still_in_exit_zone = ticker in exit_threshold_stocks
-
-            # 检查持有期
-            current_holding_period = self.holding_periods_long.get(ticker, 0)
-
-            # 决策: 是否继续持有
-            if still_in_exit_zone and current_holding_period < self.min_holding_periods:
-                # 继续持有: 仍在阈值内 且 未满最小持有期
-                new_holdings.append(ticker)
-                self.holding_periods_long[ticker] = current_holding_period + 1
-            elif not still_in_exit_zone and current_holding_period < self.min_holding_periods:
-                # 已掉出阈值但未满最小持有期: 继续持有（强制）
-                new_holdings.append(ticker)
-                self.holding_periods_long[ticker] = current_holding_period + 1
-            elif still_in_exit_zone and current_holding_period >= self.min_holding_periods:
-                # 仍在阈值内且已满最小持有期: 继续持有
-                new_holdings.append(ticker)
-                self.holding_periods_long[ticker] = current_holding_period + 1
-            else:
-                # 掉出阈值且已满最小持有期: 退出
-                # 从持有期字典中删除
-                if ticker in self.holding_periods_long:
-                    del self.holding_periods_long[ticker]
-
-        # 2. 遍历候选新股票，判断是否买入
-        for ticker in entry_candidates:
-            if ticker not in new_holdings:
-                # 新买入: 排名在进入阈值内 且 当前未持有
-                new_holdings.append(ticker)
-                self.holding_periods_long[ticker] = 1  # 初始化持有期为1
-
-        return new_holdings
-
-    def _build_short_side(
+    def _entry_and_exit_zones(
         self,
-        date: pd.Timestamp,
         valid_values: pd.Series,
-        period_index: int
-    ) -> list:
+        side: str
+    ) -> Tuple[List[str], Set[str]]:
         """
-        构建空头持仓（带进出阈值和最小持有期约束）
-
-        逻辑与多头类似，但方向相反
+        计算某一侧的进入候选和退出阈值区
 
         Args:
-            date: 当前日期
-            valid_values: 当前因子值
-            period_index: 当前是第几期
+            valid_values: 当期有效因子值
+            side: 'long' 或 'short'
 
         Returns:
-            空头持仓股票列表
+            (进入候选列表, 退出阈值内的股票集合)
+            例如 entry=25%, exit=30%: 排名进入前25%才买入, 掉出前30%才算离开
         """
-        # 排序
         sorted_values = valid_values.sort_values(ascending=False)
-
-        # 计算分位数阈值
         n_stocks = len(sorted_values)
+        entry_rank = int(n_stocks * self.entry_quantile)
+        exit_rank = int(n_stocks * self.exit_quantile)
 
-        if self.long_top:
-            # 做空低因子值: Bottom 25%进入, Bottom 30%退出
-            entry_rank = int(n_stocks * self.entry_quantile)
-            exit_rank = int(n_stocks * self.exit_quantile)
-
-            entry_candidates = sorted_values.tail(entry_rank).index.tolist()
-            exit_threshold_stocks = sorted_values.tail(exit_rank).index.tolist()
-        else:
-            # 做空高因子值: Top 25%进入, Top 30%退出
-            entry_rank = int(n_stocks * self.entry_quantile)
-            exit_rank = int(n_stocks * self.exit_quantile)
-
+        # long_top=True时: 多头取因子值高的一端, 空头取低的一端; 否则反过来
+        take_top = (side == 'long') == self.long_top
+        if take_top:
             entry_candidates = sorted_values.head(entry_rank).index.tolist()
-            exit_threshold_stocks = sorted_values.head(exit_rank).index.tolist()
+            exit_zone = set(sorted_values.head(exit_rank).index)
+        else:
+            entry_candidates = sorted_values.tail(entry_rank).index.tolist()
+            exit_zone = set(sorted_values.tail(exit_rank).index)
 
-        # 第一期: 直接买入候选股票
-        if self.prev_holdings_short is None:
-            new_holdings = entry_candidates
-            # 初始化持有期
-            for ticker in new_holdings:
-                self.holding_periods_short[ticker] = 1
-            return new_holdings
+        return entry_candidates, exit_zone
 
-        # 非第一期: 应用进出阈值和最小持有期约束
-        new_holdings = []
+    def _retain(
+        self,
+        prev_holdings: List[str],
+        holding_periods: Dict[str, int],
+        exit_zone: Set[str]
+    ) -> List[str]:
+        """
+        决定上期持仓中哪些继续持有, 并更新持有期
 
-        # 1. 遍历上期持仓，判断是否继续持有
-        for ticker in self.prev_holdings_short:
-            # 检查是否仍在退出阈值内
-            still_in_exit_zone = ticker in exit_threshold_stocks
+        继续持有的条件（满足其一）:
+        - 仍在退出阈值内
+        - 未满最小持有期（强制持有）
 
-            # 检查持有期
-            current_holding_period = self.holding_periods_short.get(ticker, 0)
+        Args:
+            prev_holdings: 上期持仓
+            holding_periods: 持有期字典 {ticker: periods}, 会被原地更新
+            exit_zone: 退出阈值内的股票集合
 
-            # 决策: 是否继续持有
-            if still_in_exit_zone and current_holding_period < self.min_holding_periods:
-                # 继续持有
-                new_holdings.append(ticker)
-                self.holding_periods_short[ticker] = current_holding_period + 1
-            elif not still_in_exit_zone and current_holding_period < self.min_holding_periods:
-                # 已掉出阈值但未满最小持有期: 继续持有（强制）
-                new_holdings.append(ticker)
-                self.holding_periods_short[ticker] = current_holding_period + 1
-            elif still_in_exit_zone and current_holding_period >= self.min_holding_periods:
-                # 仍在阈值内且已满最小持有期: 继续持有
-                new_holdings.append(ticker)
-                self.holding_periods_short[ticker] = current_holding_period + 1
+        Returns:
+            继续持有的股票列表
+        """
+        retained = []
+        for ticker in prev_holdings:
+            held_periods = holding_periods.get(ticker, 0)
+            if ticker in exit_zone or held_periods < self.min_holding_periods:
+                retained.append(ticker)
+                holding_periods[ticker] = held_periods + 1
             else:
                 # 掉出阈值且已满最小持有期: 退出
-                if ticker in self.holding_periods_short:
-                    del self.holding_periods_short[ticker]
+                holding_periods.pop(ticker, None)
+        return retained
 
-        # 2. 遍历候选新股票，判断是否买入
+    def _enter(
+        self,
+        retained: List[str],
+        entry_candidates: List[str],
+        blocked: Set[str],
+        holding_periods: Dict[str, int]
+    ) -> List[str]:
+        """
+        在继续持有的基础上加入新开仓的股票
+
+        Args:
+            retained: 本侧继续持有的股票
+            entry_candidates: 本侧进入候选
+            blocked: 另一侧仍在持有的股票（不允许反向进入）
+            holding_periods: 本侧持有期字典, 会被原地更新
+
+        Returns:
+            本侧本期完整持仓列表
+        """
+        holdings = list(retained)
+        held = set(retained)
         for ticker in entry_candidates:
-            if ticker not in new_holdings:
-                # 新买入
-                new_holdings.append(ticker)
-                self.holding_periods_short[ticker] = 1
-
-        return new_holdings
+            if ticker in held or ticker in blocked:
+                continue
+            holdings.append(ticker)
+            holding_periods[ticker] = 1  # 初始化持有期为1
+        return holdings
 
     def _convert_to_weights(self, df_holdings: pd.DataFrame) -> pd.DataFrame:
         """

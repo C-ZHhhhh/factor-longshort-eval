@@ -9,7 +9,7 @@
 
 [INPUT]:
 - 策略收益率序列
-- 市场收益率(SPY)序列
+- 市场收益率序列 (默认SPY; 用替代基准时通过benchmark_name如实标注)
 
 [OUTPUT]:
 - exposure_summary.md: Beta分析报告
@@ -66,7 +66,8 @@ class MarketExposureAnalyzer:
         strategy_returns: Dict[str, pd.Series],
         market_returns: pd.Series,
         output_dir: str = 'results',
-        rolling_window: int = 12
+        rolling_window: int = 12,
+        benchmark_name: str = 'SPY'
     ) -> Dict:
         """
         完整的市场暴露分析
@@ -81,6 +82,8 @@ class MarketExposureAnalyzer:
             输出目录
         rolling_window : int
             滚动窗口大小(月)
+        benchmark_name : str
+            市场基准的名称, 会写进报告。传入的market_returns不是SPY时必须如实填写
 
         Returns:
         --------
@@ -159,7 +162,8 @@ class MarketExposureAnalyzer:
             full_sample_results=full_sample_results,
             rolling_beta_results=rolling_beta_results,
             output_path=output_path,
-            rolling_window=rolling_window
+            rolling_window=rolling_window,
+            benchmark_name=benchmark_name
         )
 
         logger.info("\n" + "="*80)
@@ -233,7 +237,8 @@ class MarketExposureAnalyzer:
         full_sample_results: Dict,
         rolling_beta_results: Dict,
         output_path: Path,
-        rolling_window: int
+        rolling_window: int,
+        benchmark_name: str = 'SPY'
     ):
         """保存暴露分析报告"""
 
@@ -245,7 +250,7 @@ class MarketExposureAnalyzer:
 
         # 2. 生成 Markdown 报告
         md_content = self._create_markdown_report(
-            full_sample_results, rolling_beta_results, rolling_window
+            full_sample_results, rolling_beta_results, rolling_window, benchmark_name
         )
 
         md_file = output_path / 'exposure_summary.md'
@@ -257,7 +262,8 @@ class MarketExposureAnalyzer:
         self,
         full_sample_results: Dict,
         rolling_beta_results: Dict,
-        rolling_window: int
+        rolling_window: int,
+        benchmark_name: str = 'SPY'
     ) -> str:
         """创建 Markdown 格式报告"""
 
@@ -269,7 +275,9 @@ class MarketExposureAnalyzer:
 
 ## 概述
 
-本报告分析策略对市场指数(SPY)的暴露。
+本报告分析策略对市场基准的暴露。
+
+**市场基准**: {benchmark_name}
 
 **策略类型说明**:
 - **当前实现**: Dollar-Neutral (资金中性)

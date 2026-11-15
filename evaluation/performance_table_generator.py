@@ -35,6 +35,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from utils.logger import get_logger
+from backtest.metrics import drawdown_series
 
 logger = get_logger(__name__)
 
@@ -110,6 +111,7 @@ class PerformanceTableGenerator:
                 factor_name=factor_name,
                 nav=result['nav'],
                 nav_no_cost=result['nav_no_cost'],
+                returns=result['returns'],
                 metrics=metrics,
                 metrics_no_cost=metrics_no_cost
             )
@@ -168,6 +170,7 @@ class PerformanceTableGenerator:
         factor_name: str,
         nav: pd.Series,
         nav_no_cost: pd.Series,
+        returns: pd.Series,
         metrics: Dict,
         metrics_no_cost: Dict
     ):
@@ -196,7 +199,7 @@ class PerformanceTableGenerator:
             )
 
         # 2. 验证年化收益
-        recalc_annual_return = self._calculate_annual_return(nav)
+        recalc_annual_return = self._calculate_annual_return(returns)
         ar_diff = abs(metrics['annual_return'] - recalc_annual_return)
 
         if ar_diff > 1e-6:
@@ -207,21 +210,25 @@ class PerformanceTableGenerator:
             )
 
     def _calculate_max_drawdown(self, nav: pd.Series) -> float:
-        """计算最大回撤"""
-        cummax = nav.cummax()
-        drawdown = (nav - cummax) / cummax
-        return drawdown.min()
+        """
+        计算最大回撤（独立复算, 用于和metrics交叉核对, 故意不复用drawdown_series）
 
-    def _calculate_annual_return(self, nav: pd.Series) -> float:
-        """计算年化收益"""
-        if len(nav) < 2:
+        历史高点包含初始净值1.0: 第一期就亏损时, 这段也算回撤
+        """
+        running_peak = np.maximum(np.maximum.accumulate(nav.values), 1.0)
+        return float((nav.values / running_peak - 1).min())
+
+    def _calculate_annual_return(self, returns: pd.Series) -> float:
+        """
+        计算年化收益（从收益率序列独立复算, 用于和metrics交叉核对）
+
+        用 prod(1+r)-1 而不是 nav[-1]/nav[0]-1: 后者会漏掉第一期收益
+        """
+        if len(returns) == 0:
             return 0.0
 
-        total_return = nav.iloc[-1] / nav.iloc[0] - 1
-        n_years = len(nav) / 12  # 假设月度数据
-
-        if n_years <= 0:
-            return 0.0
+        total_return = (1 + returns).prod() - 1
+        n_years = len(returns) / 12  # 假设月度数据
 
         annual_return = (1 + total_return) ** (1 / n_years) - 1
         return annual_return
@@ -243,9 +250,8 @@ class PerformanceTableGenerator:
         for factor_name, result in backtest_results.items():
             nav = result['nav']
 
-            # 计算 drawdown 序列
-            running_max = nav.cummax()
-            drawdown = (nav - running_max) / running_max
+            # 计算 drawdown 序列（历史高点包含初始净值）
+            drawdown = drawdown_series(nav)
 
             # 1. 总水下月数
             total_underwater_months = (drawdown < 0).sum()

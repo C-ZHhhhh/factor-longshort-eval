@@ -140,10 +140,15 @@
 **关键**: report_generator.py生成完整报告
 **文档**: [visualization/CLAUDE.md](visualization/CLAUDE.md)
 
+### 8. tests/ - 回归测试
+**职责**: 锁定影响结果正确性的关键约定(因子方向、时间对齐、多空互斥、收益/回撤口径、完整月份)
+**关键**: `python -m pytest`,不联网、不依赖data/cache
+**文档**: [tests/CLAUDE.md](tests/CLAUDE.md)
+
 ## 关键约束
 
 ### 1. 时间对齐 (最重要!)
-**规则**: 因子在t计算,必须shift(1)后用t+1收益
+**规则**: 因子在t计算,必须shift(1)后用t+1收益;shift只在time_aligner做一次,因子内部不得再做防look-ahead的滞后
 **实现**: backtest/time_aligner.py
 **验证**: 第一期因子值必须为NaN
 
@@ -158,8 +163,8 @@
 **验证**: 每月均值≈0, std≈1
 
 ### 4. 中性化
-**规则**: 多头归一化到+1,空头归一化到-1,确保Σw≈0
-**实现**: portfolio/neutralization.py
+**规则**: 多头归一化到+1,空头归一化到-1,确保Σw≈0;同一只股票同一期不能同时在多头和空头
+**实现**: portfolio/neutralization.py, portfolio/portfolio_builder.py
 **验证**: abs(Σw) < 1e-10
 
 ### 5. 交易成本

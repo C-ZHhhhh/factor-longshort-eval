@@ -1,7 +1,12 @@
 """
 [INPUT]: 价格数据或月收益率数据
-[OUTPUT]: 短期反转因子值
+[OUTPUT]: 短期反转因子值, 索引t的值 = -(t月收益率)
 [POS]: 短期反转因子实现
+
+[UPDATE 2026-11-15]:
+- 修复多滞后一个月: 原实现在因子内部shift(1), 回测引擎的时间对齐又shift(1),
+  实际用的是两个月前的收益。现在因子内部不再shift, 滞后统一交给
+  backtest/time_aligner.py (因子t → 收益t+1)
 
 [PROTOCOL]:
 1. 逻辑变更时同步更新此头部
@@ -20,8 +25,9 @@ logger = get_logger(__name__)
 class ReversalFactor(BaseFactor):
     """短期反转因子
 
-    定义: -R_t-1m
-    说明: 上个月收益率的负值（捕捉短期均值回归效应）
+    定义: -R_t (t月收益率的负值, t月末即可得)
+    说明: 刚过去这个月收益率的负值（捕捉短期均值回归效应）
+          防look-ahead的滞后由回测引擎的时间对齐统一处理, 这里不重复shift
     """
 
     def __init__(self):
@@ -52,8 +58,9 @@ class ReversalFactor(BaseFactor):
         # 2. 计算月收益率
         df_return_monthly = df_price_monthly.pct_change()
 
-        # 3. 反转因子 = -R_t-1 (上个月收益率的负值)
-        df_reversal = -df_return_monthly.shift(1)
+        # 3. 反转因子 = -R_t (本月收益率的负值)
+        # 注意: 不在这里shift, 时间对齐器会把因子t对到收益t+1
+        df_reversal = -df_return_monthly
 
         # 4. 移除第一个月的NaN值
         df_reversal = df_reversal.iloc[1:]

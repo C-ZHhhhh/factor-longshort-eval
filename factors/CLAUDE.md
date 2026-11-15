@@ -16,6 +16,7 @@
 1. **横截面标准化**: 每月独立进行Winsorize + Z-score
 2. **缺失值处理**: 缺失值的股票不参与排序(标记为NaN)
 3. **因子定义**: 严格按照学术定义实现
+4. **时间约定**: 索引t的因子值只能用到t月末及之前的数据;因子内部不做防look-ahead的shift,统一由backtest/time_aligner.py把因子t对齐到收益t+1
 
 ## 成员清单
 
@@ -23,9 +24,9 @@
 
 **base_factor.py**: 因子基类,定义统一接口calculate()。
 
-**momentum.py**: 动量因子 - (P_t-12m / P_t-1m) - 1
+**momentum.py**: 动量因子 - (P_t-1m / P_t-12m) - 1 (近价在分子,过去涨得多→因子值高)
 
-**reversal.py**: 短期反转因子 - -R_t-1m
+**reversal.py**: 短期反转因子 - -R_t (因子内部不shift,滞后统一由time_aligner处理)
 
 **low_volatility.py**: 低波因子 - -σ(日收益, 3个月)
 
