@@ -9,11 +9,16 @@
 - get_clean_data额外下载市场基准SPY, 以月收益率Series存入缓存的'SPY'键,
   供市场暴露(Beta)分析使用; 之前缓存里没有SPY, 报告里的"对SPY的Beta"
   实际是对股票等权平均算的。
+- 缓存里再存一份SPY的日收益率('SPY_daily'键), 供Beta对冲估计每只股票的滚动Beta使用。
+  已有的旧缓存用 add_benchmark_daily_to_cache() 补上这一个键, 不用重新下载股票数据
+  (重新下载会让股票池变成今天的成分股, 结果就不可比了)。
 
 [PROTOCOL]:
 1. 逻辑变更时同步更新此头部
 2. 更新后检查所在文件夹的 CLAUDE.md
 """
+
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -149,15 +154,35 @@ class DataCleaner:
         return df_return_monthly
 
 
-def fetch_benchmark_monthly_return(
+BENCHMARK_MONTHLY_KEY = 'SPY'
+BENCHMARK_DAILY_KEY = 'SPY_daily'
+
+
+def _fetch_benchmark_price(
+    yf_fetcher,
+    start_date: str,
+    end_date: str,
+    symbol: str,
+    price_col: str
+) -> Optional[pd.Series]:
+    """下载市场基准的复权价; 下载失败返回None。"""
+    data = yf_fetcher.fetch([symbol], start_date, end_date)
+    df = data.get(symbol)
+    if df is None or price_col not in df.columns or df[price_col].dropna().empty:
+        logger.error(f"市场基准 {symbol} 下载失败")
+        return None
+    return df[price_col]
+
+
+def fetch_benchmark_returns(
     yf_fetcher,
     start_date: str,
     end_date: str,
     symbol: str = 'SPY',
     price_col: str = 'Adj Close'
-) -> Optional[pd.Series]:
+) -> Optional[Tuple[pd.Series, pd.Series]]:
     """
-    下载市场基准并计算月收益率
+    下载市场基准, 一次得到月收益率和日收益率 (来自同一份价格, 保证两者一致)
 
     Args:
         yf_fetcher: YFinanceFetcher实例
@@ -167,21 +192,85 @@ def fetch_benchmark_monthly_return(
         price_col: 价格列名(复权价)
 
     Returns:
-        基准月收益率Series; 下载失败返回None(调用方需要明确处理, 不要悄悄换别的基准)
+        (月收益率Series, 日收益率Series); 下载失败返回None
+        (调用方需要明确处理, 不要悄悄换别的基准)
     """
-    data = yf_fetcher.fetch([symbol], start_date, end_date)
-    df = data.get(symbol)
-    if df is None or price_col not in df.columns or df[price_col].dropna().empty:
-        logger.error(f"市场基准 {symbol} 下载失败, 缓存中将不包含基准收益")
+    price = _fetch_benchmark_price(yf_fetcher, start_date, end_date, symbol, price_col)
+    if price is None:
         return None
 
-    benchmark_return = DataCleaner().monthly_return_from_price(df[price_col], end_date)
-    benchmark_return.name = symbol
+    monthly = DataCleaner().monthly_return_from_price(price, end_date)
+    monthly.name = symbol
+    daily = price.pct_change().dropna()
+    daily.name = symbol
     logger.info(
-        f"市场基准 {symbol}: {len(benchmark_return)} 月 "
-        f"({benchmark_return.index[0].date()} ~ {benchmark_return.index[-1].date()})"
+        f"市场基准 {symbol}: {len(monthly)} 月 "
+        f"({monthly.index[0].date()} ~ {monthly.index[-1].date()}), {len(daily)} 个交易日"
     )
-    return benchmark_return
+    return monthly, daily
+
+
+def fetch_benchmark_monthly_return(
+    yf_fetcher,
+    start_date: str,
+    end_date: str,
+    symbol: str = 'SPY',
+    price_col: str = 'Adj Close'
+) -> Optional[pd.Series]:
+    """下载市场基准并计算月收益率; 下载失败返回None。"""
+    returns = fetch_benchmark_returns(yf_fetcher, start_date, end_date, symbol, price_col)
+    return None if returns is None else returns[0]
+
+
+def add_benchmark_daily_to_cache(cache_file, yf_fetcher=None, tolerance: float = 1e-4) -> pd.Series:
+    """
+    给已有的缓存补上市场基准的日收益率 (只新增 'SPY_daily' 一个键, 其他数据不动)
+
+    下载的日期范围取缓存里价格数据自己的范围。写入前会核对: 用新下载的价格算出的月收益率
+    必须和缓存里原有的月收益率对得上, 确认是同一份基准。
+
+    Args:
+        cache_file: 缓存文件路径
+        yf_fetcher: YFinanceFetcher实例 (默认新建一个)
+        tolerance: 新旧月收益率允许的最大差异
+
+    Returns:
+        写入缓存的日收益率Series (缓存里已经有的话直接返回原有的)
+    """
+    cache = pd.read_pickle(cache_file)
+    if cache.get(BENCHMARK_DAILY_KEY) is not None:
+        logger.info(f"缓存里已有 {BENCHMARK_DAILY_KEY}, 不需要补")
+        return cache[BENCHMARK_DAILY_KEY]
+
+    if yf_fetcher is None:
+        from data.data_fetcher import YFinanceFetcher
+        yf_fetcher = YFinanceFetcher(max_workers=1)
+
+    price_index = cache['price'].index
+    start_date = price_index[0].strftime('%Y-%m-%d')
+    end_date = (price_index[-1] + pd.Timedelta(days=1)).strftime('%Y-%m-%d')  # 结束日期不含当天
+    returns = fetch_benchmark_returns(yf_fetcher, start_date, end_date)
+    if returns is None:
+        raise RuntimeError("市场基准下载失败, 缓存没有改动")
+    monthly, daily = returns
+
+    cached_monthly = cache.get(BENCHMARK_MONTHLY_KEY)
+    if cached_monthly is not None:
+        common = monthly.index.intersection(cached_monthly.index)
+        max_diff = float((monthly[common] - cached_monthly[common]).abs().max())
+        if len(common) == 0 or max_diff > tolerance:
+            raise RuntimeError(
+                f"新下载的基准和缓存里的月收益率对不上 (最大差异 {max_diff:.6f}), 缓存没有改动"
+            )
+        logger.info(f"与缓存里的月收益率核对通过: {len(common)} 个月, 最大差异 {max_diff:.2e}")
+
+    cache[BENCHMARK_DAILY_KEY] = daily
+    # 先写到临时文件再替换: 写到一半出错也不会弄坏原来的缓存
+    temp_file = Path(str(cache_file) + '.tmp')
+    pd.to_pickle(cache, temp_file)
+    temp_file.replace(cache_file)
+    logger.info(f"已写入 {BENCHMARK_DAILY_KEY}: {len(daily)} 个交易日 → {cache_file}")
+    return daily
 
 
 def get_clean_data(
@@ -275,10 +364,10 @@ def get_clean_data(
             'return_monthly': df_return_monthly
         }
 
-        # 市场基准(SPY)月收益率, 用于Beta/暴露分析
-        benchmark_return = fetch_benchmark_monthly_return(yf_fetcher, start_date, end_date)
-        if benchmark_return is not None:
-            cache_data['SPY'] = benchmark_return
+        # 市场基准(SPY): 月收益率用于Beta/暴露分析, 日收益率用于Beta对冲里估计股票的滚动Beta
+        benchmark_returns = fetch_benchmark_returns(yf_fetcher, start_date, end_date)
+        if benchmark_returns is not None:
+            cache_data[BENCHMARK_MONTHLY_KEY], cache_data[BENCHMARK_DAILY_KEY] = benchmark_returns
         pd.to_pickle(cache_data, cache_file)
         logger.info(f"数据已缓存: {cache_file}")
 

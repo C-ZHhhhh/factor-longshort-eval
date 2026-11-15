@@ -3,6 +3,10 @@
 [OUTPUT]: 时间对齐后的因子值和收益率
 [POS]: 时间对齐模块 - 系统生命线，防止look-ahead bias
 
+[UPDATE 2026-11-15]:
+- 新增 lag_to_return_dates(): 股票Beta这类"月末才知道"的量也从这里滞后一期,
+  保证滞后只在本模块发生。
+
 [PROTOCOL]:
 1. 逻辑变更时同步更新此头部
 2. 更新后检查所在文件夹的 CLAUDE.md
@@ -130,6 +134,30 @@ class TimeAligner:
 
         logger.info(f"对齐后: {df_weights_aligned.shape}")
         return df_weights_aligned, df_return_aligned
+
+    def lag_to_return_dates(
+        self,
+        df_signal: pd.DataFrame,
+        return_dates: pd.Index
+    ) -> pd.DataFrame:
+        """
+        把"t月末已知的量"对到"t+1月的收益"上
+
+        因子/权重之外, 其他只在月末才知道的量 (如每只股票的Beta) 也要滞后一期才能用,
+        统一从这里走, 不在各模块里各自shift。
+
+        Args:
+            df_signal: 月末日期 × 股票, 第t行只用到了t月末及之前的数据
+            return_dates: 收益所在的月份 (月末日期)
+
+        Returns:
+            与 return_dates 同索引; 第t行是 t-1 月末已知的值
+        """
+        months = df_signal.index.to_period('M')
+        if len(months) > 1 and not ((months[1:] - months[:-1]).map(lambda d: d.n) == 1).all():
+            # 中间缺月份时 shift(1) 会滞后不止一个月, 直接报错
+            raise ValueError("df_signal 的月份必须连续, 否则shift(1)不等于滞后一个月")
+        return df_signal.shift(1).reindex(return_dates)
 
     def _verify_alignment(
         self,

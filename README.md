@@ -19,6 +19,7 @@ python -m pytest                                                      # 回归�
 
 - Python ≥ 3.9（第 9 节的结果是在 Python 3.12 下跑出来的）。
 - 跑完后用浏览器打开 `results/report.html` 就能看到带图表的网页版报告（单文件，不联网也能看）。
+- 如果你的缓存是以前下载的，评估会提示缺少 SPY 的每日数据。运行 `python scripts/download_data.py --add-benchmark-daily` 补上这一项即可，不会重新下载股票。
 - 数据默认只用 yfinance，不需要任何账号。Alpaca 是可选的第二数据源，配置方法见 [docs/ALPACA_SETUP.md](docs/ALPACA_SETUP.md)。
 
 ## 目录结构
@@ -137,11 +138,18 @@ results/        正式结果（表格、报告、图）
 
 资金中性只保证多空两边的钱一样多，**不保证组合不随大盘涨跌**。实测各组合对 SPY 的 Beta 并不接近 0（动量 −0.17，低波 −0.50），见 9.2。
 
-## 3.2 第二档：Beta-neutral（未使用）
+## 3.2 第二档：Beta 对冲（已实现，作为附加对比）
 
-设计：用过去 252 天日收益对市场（SPY）回归得到每只股票的 beta，调整权重使 ( $\sum w_i \beta_i \approx 0$ )。
+资金中性的组合仍然会跟着大盘涨跌。Beta 对冲的做法是：**不改选股和权重**，在组合之外加一份 SPY 仓位把这部分抵消掉。
 
-现状：`portfolio/neutralization.py` 里有 `beta_neutral` 函数，但没有接入任何回测，也没有测试，正式结果没有用它。
+1. 用过去 252 个交易日的日收益对 SPY 回归，得到每只股票的 Beta
+2. 组合 Beta = ( $\sum w_i \beta_i$ )，只用**上个月末**已知的 Beta（不偷看未来）
+3. 对冲仓位 = −组合 Beta（组合 Beta 是 −0.5，就买入 0.5 份 SPY），每月更新
+4. 调整对冲仓位也按 20 bps × 换手率扣成本
+
+正式结果（第 9.1 节的表）仍然是**对冲前**的；对冲前后的对比见 9.2。252 天是事先定的常规取值，没有拿回测结果去挑。
+
+简化：对冲仓位没有算资金成本（相当于用期货对冲且不计无风险利率），做空 SPY 的借券费也没算。
 
 ## 3.3 第三档：行业中性（未实现）
 
@@ -234,7 +242,7 @@ results/        正式结果（表格、报告、图）
 ## 6.4 暴露检查（Exposure）
 
 * 用组合月收益对 SPY 月收益回归，得到 Beta、Alpha、R²；|Beta| > 0.1 记为超标
-* 设计里的"中性化前后 Beta 对比"没有做，因为 Beta 中性没有接入（见 3.2）
+* Beta 对冲前后的对比：在同一段时间上比较对冲前、对冲后的实现 Beta、年化收益、Sharpe、回撤和显著性（见 3.2 和 9.2）
 
 ---
 
@@ -269,6 +277,7 @@ results/        正式结果（表格、报告、图）
 * `performance_table`：年化收益 / 波动 / Sharpe / MaxDD / 换手
 * `robustness_table`：子样本 / 成本 / 分位数
 * `significance_summary`、`exposure_summary`、`cagr_diagnostics`
+* `beta_hedge_comparison`：Beta 对冲前后对比
 * `EVALUATION_REPORT.md`：综合评估报告
 * `report.html`：网页版报告。净值和回撤曲线、各策略对比、稳健性、市场暴露都在一页里，鼠标悬停可以看具体数值。GitHub 上只能看到源码，需要下载后用浏览器打开
 
@@ -360,8 +369,30 @@ results/        正式结果（表格、报告、图）
 **关键发现**（基准为 SPY）:
 - **Momentum Beta = -0.17**（超过 0.1 阈值），R² = 0.08：组合只做到资金中性，没有做到 Beta 中性
 - **Momentum Alpha ≈ 0.0001/月**（接近零），扣除市场影响后没有显著的纯因子收益
-- LowVolatility 的 Beta 达 -0.50，它的大幅亏损很大一部分是在牛市里净做空市场造成的
-- **改进方向**: 需实施 Beta-Neutral 中性化
+- LowVolatility 的 Beta 达 -0.50：它做多低波动股票、做空高波动股票，相当于在牛市里净做空了大盘
+
+---
+
+### Beta 对冲前后
+
+加上 Beta 对冲（做法见 3.2）以后，在同一段时间上比较。每格是 对冲前 → 对冲后，均已扣除交易成本。
+
+| 因子 | 实现 Beta | 年化收益 | Sharpe | 最大回撤 | 显著性 p 值 |
+|------|-----------|---------|--------|----------|------------|
+| Momentum | -0.17 → -0.15 | -2.97% → -2.74% | -0.29 → -0.30 | -34.94% → -30.35% | 0.346 → 0.270 |
+| Reversal | +0.02 → +0.03 | -0.57% → -0.24% | -0.12 → -0.04 | -14.94% → -13.07% | 0.660 → 0.862 |
+| LowVolatility | -0.50 → -0.02 | -10.13% → -3.51% | -0.77 → -0.29 | -69.99% → -39.27% | 0.014 → 0.343 |
+| Trend | -0.19 → -0.14 | -1.10% → -1.49% | -0.11 → -0.18 | -26.14% → -26.50% | 0.665 → 0.469 |
+| Composite | -0.26 → -0.08 | -5.35% → -3.50% | -0.59 → -0.45 | -42.63% → -32.60% | 0.050 → 0.089 |
+
+对冲后的样本从有足够 Beta 数据的月份开始（Reversal、LowVolatility 从 2015-08 起），所以个别"对冲前"的数字和 9.1 略有不同。
+
+**关键发现**:
+- **低波因子的亏损大部分是市场暴露**：对冲后 Beta 从 -0.50 降到 -0.02，年化收益从 -10.13% 变为 -3.51%，原来的亏损里约 65% 来自市场暴露。去掉这部分以后仍然是负的，但不再显著。
+- **动量和趋势对冲不掉**：对冲后 Beta 仍是 -0.15 和 -0.14。它们事前估计的组合 Beta 平均只有 +0.03 和 +0.02，用历史 Beta 估计不出这部分市场暴露。
+- **结论不变**：对冲后 5 个策略仍然全部是负收益。
+
+详见 [beta_hedge_comparison.md](results/beta_hedge_comparison.md)。
 
 ---
 
@@ -370,6 +401,7 @@ results/        正式结果（表格、报告、图）
 - **幸存者偏差（未修复）**: 股票池用的是"今天"的 S&P 500 成分股名单回测 2015 年以来的历史，
   等于提前知道哪些公司会留在/进入指数。要消除需要历史成分股数据。
 - **成分股名单会变**: 不同日期下载到的股票池略有差异，重跑结果不会和上表逐位一致。
+- **Beta 对冲不完全**: 用历史 Beta 做的对冲去不掉动量和趋势的市场暴露；对冲仓位也没有计入资金成本。
 - **Alpaca 交叉验证未实测**: 未配置 API key 时只使用 yfinance 单一数据源。
 
 ---
@@ -380,6 +412,7 @@ results/        正式结果（表格、报告、图）
 - [Evaluation Report](results/EVALUATION_REPORT.md) - 综合评估报告
 - [Performance Table](results/performance_table.md) / [Robustness Table](results/robustness_table.md) - 绩效和稳健性表格
 - [Significance](results/significance_summary.md) / [Exposure](results/exposure_summary.md) - 显著性检验和市场暴露
+- [Beta Hedge](results/beta_hedge_comparison.md) - Beta 对冲前后对比
 - [CAGR Diagnostics](results/cagr_diagnostics.md) - 年化收益计算验证
 - [All Figures](results/figures/) - 完整图表集
 - [网页版报告](results/report.html) - 带交互图表的单文件网页（下载后用浏览器打开）

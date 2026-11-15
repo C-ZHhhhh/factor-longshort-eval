@@ -272,9 +272,15 @@ def describe_exposure_caveat(exposure_full_sample: Optional[Dict]) -> str:
 def final_conclusion(
     df_performance: pd.DataFrame,
     significance_results: Dict,
-    exposure_full_sample: Optional[Dict]
+    exposure_full_sample: Optional[Dict],
+    df_hedge: Optional[pd.DataFrame] = None
 ) -> str:
-    """最终结论: 证据等级 + 还需要做什么。"""
+    """
+    最终结论: 证据等级 + 市场暴露的影响 + 还需要做什么。
+
+    df_hedge: Beta 对冲前后对比表 (可选)。给了就按对冲后的实际结果下结论,
+              没给才写"需要做 Beta 中性化"。
+    """
     level = evidence_level(df_performance, significance_results)
     if level == 'supported':
         md = ("**最终结论**: 样本内有因子扣成本后取得**统计显著的正收益**。"
@@ -290,9 +296,94 @@ def final_conclusion(
         name for name, stats in (exposure_full_sample or {}).items()
         if abs(stats['beta']) > BETA_THRESHOLD
     ]
-    if high_beta:
+    if high_beta and df_hedge is None:
         md += (f"另外 {', '.join(high_beta)} 的市场 Beta 超标，收益里混有大盘涨跌的影响，"
                "**需实施 Beta-Neutral 中性化**后才能判断纯粹的因子收益。")
+    elif high_beta:
+        n_positive = int((df_hedge['annual_return_after'] > 0).sum())
+        md += (f"{', '.join(high_beta)} 的市场 Beta 超标，收益里混有大盘涨跌的影响；"
+               f"加上 Beta 对冲后（见 6.5），{len(df_hedge)} 个策略中有 {n_positive} 个年化收益为正，")
+        md += "结论没有改变。" if (n_positive > 0) == (level != 'none') else "结论因此不同，以 6.5 的对比为准。"
     md += ("此外股票池用的是当前成分股（幸存者偏差），"
            "结论需要在历史成分股、更长样本期和其他市场上进一步验证。\n\n")
     return md
+
+
+# ============================================================
+# Beta 对冲前后
+# ============================================================
+
+def describe_beta_hedge(df_comparison: pd.DataFrame) -> str:
+    """
+    Beta 对冲前后对比的结论 (Markdown 列表)
+
+    Args:
+        df_comparison: evaluation/beta_hedge_comparison.compare_hedged() 的对比表
+    """
+    exceeds = lambda column: df_comparison[column].abs() > BETA_THRESHOLD
+    fixed = df_comparison[exceeds('beta_before') & ~exceeds('beta_after')]
+    still = df_comparison[exceeds('beta_after')]
+    beta_change = lambda row: f"{row['factor']} {row['beta_before']:+.2f} → {row['beta_after']:+.2f}"
+
+    lines = []
+
+    # 1. 对冲有没有把市场暴露去掉
+    if not exceeds('beta_before').any():
+        lines.append(f"对冲前所有策略的实现 Beta 就在 ±{BETA_THRESHOLD} 以内，对冲对结果影响很小。")
+    if len(fixed) > 0:
+        lines.append(
+            f"**对冲有效**的策略：{'、'.join(beta_change(row) for _, row in fixed.iterrows())}，"
+            f"实现 Beta 降到了 ±{BETA_THRESHOLD} 以内。"
+        )
+    if len(still) > 0:
+        ex_ante = '、'.join(f"{row['factor']} {row['ex_ante_beta_mean']:+.2f}" for _, row in still.iterrows())
+        lines.append(
+            f"**对冲不掉**的策略：{'、'.join(beta_change(row) for _, row in still.iterrows())}，"
+            f"对冲后实现 Beta 仍然超标。它们事前估计的组合 Beta 平均为 {ex_ante}，"
+            "和事后实现的 Beta 差得远：用历史 Beta 估计不出这部分市场暴露，所以对冲仓位几乎没起作用。"
+        )
+
+    # 2. 对冲有效的策略, 收益变了多少
+    for _, row in fixed.iterrows():
+        before, after = row['annual_return_before'], row['annual_return_after']
+        change = f"{row['factor']} 的年化收益从 {before:.2%} 变为 {after:.2%}"
+        if before < 0 and after >= 0:
+            lines.append(f"{change}，**对冲后转正**：它原来的亏损来自市场暴露。")
+        elif before < after < 0:
+            share = 1 - after / before
+            lines.append(
+                f"{change}：原来的亏损里约 **{share:.0%}** 来自市场暴露，"
+                "去掉这部分以后**仍然是负的**。"
+            )
+        elif after <= before:
+            lines.append(f"{change}：去掉市场暴露后收益没有改善。")
+        else:
+            lines.append(f"{change}。")
+
+    # 3. 总体结论
+    n_total = len(df_comparison)
+    positive_after = df_comparison[df_comparison['annual_return_after'] > 0]
+    significant = lambda suffix: (
+        df_comparison[f'nw_p_value_{suffix}'] < SIGNIFICANCE_LEVEL
+    )
+    negative = lambda suffix: df_comparison[f'mean_return_{suffix}'] < 0
+    if len(positive_after) == 0:
+        overall = f"**对冲后仍然没有任何策略取得正收益**（{n_total} 个全部为负）。"
+    else:
+        sig_positive = positive_after[
+            positive_after['nw_p_value_after'] < SIGNIFICANCE_LEVEL
+        ]
+        overall = f"对冲后 {n_total} 个策略中有 {len(positive_after)} 个年化收益为正（{', '.join(positive_after['factor'])}）"
+        overall += (
+            f"，其中 {', '.join(sig_positive['factor'])} 在统计上显著。" if len(sig_positive) > 0
+            else "，但统计上都不显著。"
+        )
+    still_significant = df_comparison[significant('after') & negative('after')]
+    no_longer = df_comparison[significant('before') & negative('before') & ~significant('after')]
+    if len(still_significant) > 0:
+        overall += f"{', '.join(still_significant['factor'])} 的负收益对冲后仍然在统计上显著。"
+    if len(no_longer) > 0:
+        overall += f"{', '.join(no_longer['factor'])} 的负收益对冲前显著、对冲后不再显著。"
+    lines.append(overall)
+
+    return ''.join(f"- {line}\n" for line in lines)

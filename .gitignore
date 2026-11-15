@@ -77,6 +77,8 @@ results/**
 !results/significance_summary.md
 !results/cagr_diagnostics.md
 !results/report.html
+!results/beta_hedge_comparison.csv
+!results/beta_hedge_comparison.md
 
 # Whitelist: Core figures directory and README
 !results/figures/

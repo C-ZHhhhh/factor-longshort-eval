@@ -31,6 +31,7 @@
     --series-4: #eda100;
     --series-5: #e87ba4;
     --series-6: #008300;
+    --muted-fill: #b5b3aa;
     --critical: #d03b3b;
     --good: #0ca30c;
   }
@@ -52,6 +53,7 @@
       --series-4: #c98500;
       --series-5: #d55181;
       --series-6: #0ca30c;
+      --muted-fill: #5c5b57;
       --critical: #d03b3b;
       --good: #0ca30c;
     }
@@ -73,6 +75,7 @@
     --series-4: #c98500;
     --series-5: #d55181;
     --series-6: #0ca30c;
+    --muted-fill: #5c5b57;
     --critical: #d03b3b;
     --good: #0ca30c;
   }
@@ -280,6 +283,25 @@
     </figure>
     <ul class="points" id="exposure-notes"></ul>
     <div id="exposure-table"></div>
+  </section>
+
+  <section class="card" id="hedge-section" aria-labelledby="hedge-title">
+    <h2 id="hedge-title">Beta 对冲前后</h2>
+    <p class="lead" id="hedge-lead"></p>
+    <div class="panels">
+      <figure>
+        <figcaption>实现 Beta</figcaption>
+        <p class="figure-note">灰色是对冲前，彩色是对冲后。越接近 0 越好。</p>
+        <div class="chart" id="hedge-beta"></div>
+      </figure>
+      <figure>
+        <figcaption>年化净收益</figcaption>
+        <p class="figure-note">灰色是对冲前，彩色是对冲后。两边用同一段时间。</p>
+        <div class="chart" id="hedge-return"></div>
+      </figure>
+    </div>
+    <ul class="points" id="hedge-notes" style="margin-top:14px"></ul>
+    <div id="hedge-table"></div>
   </section>
 
   <section class="card" aria-labelledby="limits-title">
@@ -608,7 +630,9 @@
           + 'L' + end + ',' + (barTop + barH - radius)
           + 'Q' + end + ',' + (barTop + barH) + ' ' + (end - direction * radius) + ',' + (barTop + barH)
           + 'L' + base + ',' + (barTop + barH) + 'Z';
-        group.appendChild(svg('path', { d: d, class: 'bar', fill: seriesColor(row.slot) }));
+        group.appendChild(svg('path', {
+          d: d, class: 'bar', fill: row.muted ? 'var(--muted-fill)' : seriesColor(row.slot),
+        }));
         group.appendChild(svgText(options.format(row.value), {
           x: end + direction * 6, y: rowTop + rowH / 2 + 4,
           'text-anchor': direction > 0 ? 'start' : 'end', class: 'value',
@@ -832,6 +856,55 @@
       pct(s.exposure.alpha, 3), pct(s.exposure.r_squared, 1),
     ])
   );
+
+  // ---------- Beta 对冲前后 ----------
+  const hedge = data.beta_hedge;
+  if (!hedge) {
+    $('hedge-section').hidden = true;
+  } else {
+    $('hedge-lead').textContent =
+      '在原组合之外加一份 ' + meta.benchmark + ' 仓位，把组合对大盘的敏感度抵消掉；选股和权重不变。'
+      + '对冲仓位只用上个月末已知的股票 Beta。上面几节的数字都是对冲前的。';
+    // 每个策略两行: 对冲前 (灰) 和对冲后 (该策略的颜色)
+    const pairedRows = (field, format) => hedge.rows.reduce((rows, r) => rows.concat([
+      {
+        label: r.short_label + ' · 对冲前', value: r[field + '_before'], slot: r.slot, muted: true,
+        tip: [{ name: r.label + '，对冲前', value: format(r[field + '_before']) }],
+      },
+      {
+        label: r.short_label + ' · 对冲后', value: r[field + '_after'], slot: r.slot,
+        tip: [
+          { name: r.label + '，对冲后', value: format(r[field + '_after']) },
+          { name: '对冲前', value: format(r[field + '_before']) },
+        ],
+      },
+    ]), []);
+    barChart($('hedge-beta'), {
+      rows: pairedRows('beta', (v) => num(v, 2)),
+      format: (v, isTick) => num(v, isTick ? 1 : 2),
+      thresholds: [{ value: -betaThreshold, label: '-' + betaThreshold }, { value: betaThreshold, label: '+' + betaThreshold }],
+      labelWidth: 112, ariaLabel: '各策略对冲前后的实现 Beta',
+    });
+    barChart($('hedge-return'), {
+      rows: pairedRows('annual_return', (v) => pct(v)),
+      format: (v, isTick) => pct(v, isTick ? 0 : 2),
+      labelWidth: 112, ariaLabel: '各策略对冲前后的年化净收益',
+    });
+    fillList('hedge-notes', hedge.notes);
+    const arrow = (a, b) => a + ' → ' + b;
+    tableView(
+      $('hedge-table'), '查看对冲前后数据表',
+      ['策略', '区间', '事前组合 Beta', '实现 Beta', '年化净收益', 'Sharpe', '最大回撤', '显著性 p 值'],
+      hedge.rows.map((r) => [
+        { slot: r.slot, text: r.label }, r.start + ' ~ ' + r.end, num(r.ex_ante_beta_mean, 2),
+        arrow(num(r.beta_before, 2), num(r.beta_after, 2)),
+        arrow(pct(r.annual_return_before), pct(r.annual_return_after)),
+        arrow(num(r.sharpe_before, 2), num(r.sharpe_after, 2)),
+        arrow(pct(r.max_drawdown_before), pct(r.max_drawdown_after)),
+        arrow(num(r.nw_p_value_before, 3), num(r.nw_p_value_after, 3)),
+      ])
+    );
+  }
 
   // ---------- 局限与页脚 ----------
   fillList('limitations', data.limitations);

@@ -31,7 +31,11 @@
 
 **robustness.py**: 稳健性测试模块。子样本测试、参数敏感性分析。提供 `analyze_robustness()` 完整工作流。
 
-**report_narrative.py**: 评估报告的文字结论。纯函数,输入性能表/显著性/稳健性/暴露数据,输出RQ1、RQ2、Caveat、最终结论等段落。由 `scripts/run_evaluation.py` 调用。
+**report_narrative.py**: 评估报告的文字结论。纯函数,输入性能表/显著性/稳健性/暴露数据/对冲对比表,输出RQ1、RQ2、Caveat、最终结论、Beta对冲结论等段落。由 `scripts/run_evaluation.py` 调用。
+
+**significance.py**: `newey_west_mean_test()`,检验月收益均值是否为0。正式评估和Beta对冲对比共用。
+
+**beta_hedge_comparison.py**: Beta对冲前后对比。`compare_hedged()`给每个策略加上市场对冲(调用`backtest/beta_hedge.py`),在同一段时间上比较对冲前后的实现Beta、年化收益、Sharpe、回撤、显著性;`create_markdown()`生成`beta_hedge_comparison.md`。
 
 **performance_table_generator.py**: 性能表格生成器。输出 performance_table.csv/.md 和 drawdown_stats.csv。
 

@@ -25,7 +25,7 @@
 
 **factor_visualizer.py**: 静态图(matplotlib)。净值曲线对比、IC 时间序列、回撤曲线、因子相关性热图、毛收益 vs 净收益。
 
-**html_report.py**: 网页报告的数据和结论。`build_report_data()` 把回测/评估结果组装成一个可存为 JSON 的 dict(含文字结论);`render_html()` 把它填进模板;`write_report()` 写出 `report_data.json` 和 `report.html`。由 `scripts/run_evaluation.py` 调用。
+**html_report.py**: 网页报告的数据和结论(含可选的"Beta 对冲前后"一节)。`build_report_data()` 把回测/评估结果组装成一个可存为 JSON 的 dict(含文字结论);`render_html()` 把它填进模板;`write_report()` 写出 `report_data.json` 和 `report.html`。由 `scripts/run_evaluation.py` 调用。
 
 **report_template.html**: 网页报告的模板。只负责排版和用内联 JS 画图(折线图、条形图、悬停提示、数据表),数据全部来自 `html_report.py` 填入的 JSON。
 

@@ -9,6 +9,7 @@
 - df_robustness (DataFrame): 稳健性表 (test_type / parameter / annual_return / sharpe / max_drawdown)
 - ic_results (dict): {因子名: {'ic_mean', 'ir', 'ic_positive_ratio', 't_statistic'}}
 - metadata (dict): results/metadata.json 的内容
+- df_hedge (DataFrame, 可选): Beta 对冲前后对比表 (evaluation/beta_hedge_comparison.py)
 
 [OUTPUT]:
 - build_report_data(): 报告要展示的全部数据和文字结论 (一个可以存成 JSON 的 dict)
@@ -242,7 +243,7 @@ def _build_robustness_notes(df_robustness: pd.DataFrame) -> List[str]:
     return notes
 
 
-def _build_exposure_notes(exposure_full_sample: Dict, benchmark_name: str) -> List[str]:
+def _build_exposure_notes(exposure_full_sample: Dict, benchmark_name: str, has_hedge: bool = False) -> List[str]:
     threshold = report_narrative.BETA_THRESHOLD
     high = [name for name, stats in exposure_full_sample.items() if abs(stats['beta']) > threshold]
     notes = []
@@ -254,11 +255,45 @@ def _build_exposure_notes(exposure_full_sample: Dict, benchmark_name: str) -> Li
         )
         notes.append(
             "组合只做到了资金中性（多空两边金额相等），资金中性不等于 Beta 中性；"
-            "要分清收益来自因子还是来自大盘，需要额外做 Beta 对冲。"
+            + ("加上 Beta 对冲以后的结果见下一节。" if has_hedge
+               else "要分清收益来自因子还是来自大盘，需要额外做 Beta 对冲。")
         )
     else:
         notes.append(f"所有策略的 Beta 绝对值都在 {threshold} 以内，大盘涨跌对收益的影响很小。")
     return notes
+
+
+HEDGE_CAVEAT = (
+    "注意：对冲仓位没有算资金成本（相当于用期货对冲且不计无风险利率），做空基准的借券费也没算；"
+    "对冲仓位是买入基准的策略，对冲后的收益因此偏高。"
+)
+
+
+def _build_beta_hedge(df_hedge: Optional[pd.DataFrame]) -> Optional[Dict]:
+    """Beta 对冲前后对比一节的数据; 没有对比表时返回 None (网页里不显示这一节)。"""
+    if df_hedge is None:
+        return None
+    fields = ['beta', 'annual_return', 'sharpe', 'max_drawdown', 'nw_p_value']
+    rows = []
+    for _, row in df_hedge.iterrows():
+        name = row['factor']
+        item = {
+            'key': name,
+            'label': _display_name(name),
+            'short_label': FACTOR_LABELS.get(name, name),
+            'slot': SERIES_SLOTS[name],
+            'start': row['start'],
+            'end': row['end'],
+            'ex_ante_beta_mean': _number(row['ex_ante_beta_mean']),
+        }
+        for field in fields:
+            item[f'{field}_before'] = _number(row[f'{field}_before'])
+            item[f'{field}_after'] = _number(row[f'{field}_after'])
+        rows.append(item)
+    return {
+        'rows': rows,
+        'notes': _bullets(report_narrative.describe_beta_hedge(df_hedge)) + [HEDGE_CAVEAT],
+    }
 
 
 LIMITATIONS = [
@@ -281,7 +316,8 @@ def build_report_data(
     df_robustness: pd.DataFrame,
     ic_results: Dict,
     metadata: Dict,
-    benchmark_name: str = 'SPY'
+    benchmark_name: str = 'SPY',
+    df_hedge: Optional[pd.DataFrame] = None
 ) -> Dict:
     """
     组装网页报告要展示的全部内容。
@@ -372,7 +408,8 @@ def build_report_data(
             'quantile': robustness_rows('分位数敏感性', quantile_labels),
             'notes': _build_robustness_notes(df_robustness),
         },
-        'exposure_notes': _build_exposure_notes(exposure_full_sample, benchmark_name),
+        'exposure_notes': _build_exposure_notes(exposure_full_sample, benchmark_name, df_hedge is not None),
+        'beta_hedge': _build_beta_hedge(df_hedge),
         'limitations': LIMITATIONS,
     }
 
