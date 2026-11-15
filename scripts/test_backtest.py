@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 import numpy as np
 from utils.logger import get_logger
+from data.data_loader import DataLoader
 from factors.momentum import MomentumFactor
 from factors.factor_processor import FactorProcessor
 from portfolio.portfolio_builder import PortfolioBuilder
@@ -33,14 +34,14 @@ def main():
 
     # 1. 加载数据
     logger.info("\n1. 加载数据...")
-    cache_file = 'data/cache/clean_data_2015-01-01_2026-02-03_503_dedup.pkl'
+    cache_file = DataLoader().latest_cache_file()  # 最新的缓存文件, 不写死文件名
     cache_data = pd.read_pickle(cache_file)
 
-    df_price_monthly = cache_data['price']  # 已经是月度数据
+    df_price = cache_data['price']  # 日频复权价 (因子内部会自己重采样到月末)
     df_return_daily = cache_data['return_daily']
 
-    # 计算月度收益率
-    df_return_monthly = df_price_monthly.pct_change()
+    # 月收益率直接用缓存里清洗好的 (price是日频的, 对它pct_change得到的是日收益)
+    df_return_monthly = cache_data['return_monthly']
 
     # 假设成交量（仅用于因子计算）
     df_volume_daily = pd.DataFrame(
@@ -49,13 +50,13 @@ def main():
         columns=df_return_daily.columns
     )
 
-    logger.info(f"月度价格: {df_price_monthly.shape}")
+    logger.info(f"日频价格: {df_price.shape}")
     logger.info(f"月度收益: {df_return_monthly.shape}")
 
     # 2. 计算因子（使用动量因子作为示例）
     logger.info("\n2. 计算因子...")
     momentum = MomentumFactor()
-    df_factor = momentum.calculate(df_price_monthly, df_volume_daily, df_return_daily)
+    df_factor = momentum.calculate(df_price, df_volume_daily, df_return_daily)
     logger.info(f"因子形状: {df_factor.shape}")
 
     # 3. 标准化因子
@@ -73,8 +74,9 @@ def main():
 
     # 4. 构建组合
     logger.info("\n4. 构建组合...")
-    builder = PortfolioBuilder(quantile=0.2)
-    df_holdings = builder.build(df_factor_processed)
+    # 普通的前20%/后20%组合: 进入=退出阈值, 不设最小持有期; neutralize=False返回持仓标记(+1/-1/0)
+    builder = PortfolioBuilder(entry_quantile=0.2, exit_quantile=0.2, min_holding_periods=1)
+    df_holdings = builder.build(df_factor_processed, neutralize=False)
     logger.info(f"持仓形状: {df_holdings.shape}")
 
     # 5. 分配权重

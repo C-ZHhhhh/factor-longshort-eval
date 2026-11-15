@@ -237,10 +237,12 @@ def test_robustness():
     print("\n📅 子样本测试结果:")
     for period_name, result in robustness['sub_sample'].items():
         print(f"\n{period_name}:")
-        print(f"  年化收益: {result['annual_return']:.2%}")
-        print(f"  Sharpe比率: {result['sharpe_ratio']:.4f}")
-        print(f"  最大回撤: {result['max_drawdown']:.2%}")
-        print(f"  平均换手率: {result['avg_turnover']:.2%}")
+        # 子样本结果是回测引擎的原始输出: 指标在'metrics'里, 换手率是逐期序列
+        metrics = result['metrics']
+        print(f"  年化收益: {metrics['annual_return']:.2%}")
+        print(f"  Sharpe比率: {metrics['sharpe_ratio']:.4f}")
+        print(f"  最大回撤: {metrics['max_drawdown']:.2%}")
+        print(f"  平均换手率: {result['turnover'].mean():.2%}")
 
     # 2. 成本敏感性
     print("\n💰 成本敏感性测试:")
@@ -294,6 +296,7 @@ def main():
         print(f"\n❌ 测试失败: {e}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)  # 失败时退出码非0, 不要让出错的运行看起来像成功
 
 
 def generate_evaluation_report(ic_result, neutrality, balance, attribution, robustness):
@@ -382,12 +385,14 @@ def generate_evaluation_report(ic_result, neutrality, balance, attribution, robu
 
     # 子样本结果
     for period_name, result in robustness['sub_sample'].items():
+        # 子样本结果是回测引擎的原始输出: 指标在'metrics'里, 换手率是逐期序列
+        metrics = result['metrics']
         report += f"""
 **{period_name}**:
-- 年化收益: {result['annual_return']:.2%}
-- Sharpe比率: {result['sharpe_ratio']:.4f}
-- 最大回撤: {result['max_drawdown']:.2%}
-- 平均换手率: {result['avg_turnover']:.2%}
+- 年化收益: {metrics['annual_return']:.2%}
+- Sharpe比率: {metrics['sharpe_ratio']:.4f}
+- 最大回撤: {metrics['max_drawdown']:.2%}
+- 平均换手率: {result['turnover'].mean():.2%}
 """
 
     report += """

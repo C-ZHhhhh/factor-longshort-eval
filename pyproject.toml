@@ -31,6 +31,9 @@ dependencies = [
 
     # 进度条
     "tqdm>=4.66.0",
+
+    # 表格输出 (pandas的to_markdown依赖)
+    "tabulate>=0.9.0",
 ]
 
 [project.optional-dependencies]

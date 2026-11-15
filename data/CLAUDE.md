@@ -32,6 +32,6 @@
 
 **data_cleaner.py**: 数据清洗模块。处理缺失值、计算收益率、剔除低质量股票。月收益率只保留走完的月份(月中下载时剔除不完整的最后一个月);get_clean_data同时下载市场基准SPY,以月收益率存入缓存的'SPY'键。
 
-**data_loader.py**: 缓存加载器。读取data/cache下最新的clean_data_*.pkl,标准化键名(monthly_return/daily_return),'SPY'键(基准月收益率)原样透传。
+**data_loader.py**: 缓存加载器。读取data/cache下最新的clean_data_*.pkl,标准化键名(monthly_return/daily_return),'SPY'键(基准月收益率)原样透传。latest_cache_file()是"用哪个缓存文件"的唯一入口,脚本不得写死clean_data_<日期>_<数量>.pkl文件名。
 
 ⚡触发器: 一旦本文件夹增删文件或架构逻辑调整,请立即重写此文档。

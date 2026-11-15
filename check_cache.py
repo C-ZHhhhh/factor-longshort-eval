@@ -2,11 +2,12 @@
 import pandas as pd
 import sys
 
-cache_file = 'data/cache/clean_data_2015-01-01_2026-02-04_503_dedup.pkl'
+from data.data_loader import DataLoader
 
 try:
+    cache_file = DataLoader().latest_cache_file()  # 最新的缓存文件, 不写死文件名
     data = pd.read_pickle(cache_file)
-    print('✅ 成功加载缓存文件')
+    print(f'✅ 成功加载缓存文件: {cache_file.name}')
     print(f'缓存中的键: {list(data.keys())}')
 
     if 'volume' in data:

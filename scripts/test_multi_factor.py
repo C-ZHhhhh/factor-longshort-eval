@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 import numpy as np
 from utils.logger import get_logger
+from data.data_loader import DataLoader
 from factors import (
     MomentumFactor,
     ReversalFactor,
@@ -116,20 +117,25 @@ def main():
     logger.info("1. 加载数据")
     logger.info("="*70)
 
-    cache_file = 'data/cache/clean_data_2015-01-01_2026-02-03_503_dedup.pkl'
+    cache_file = DataLoader().latest_cache_file()  # 最新的缓存文件, 不写死文件名
     cache_data = pd.read_pickle(cache_file)
 
-    df_price_monthly = cache_data['price']
+    df_price = cache_data['price']  # 日频复权价 (因子内部会自己重采样到月末)
     df_return_daily = cache_data['return_daily']
-    df_return_monthly = df_price_monthly.pct_change()
+    # 月收益率直接用缓存里清洗好的 (price是日频的, 对它pct_change得到的是日收益)
+    df_return_monthly = cache_data['return_monthly']
 
-    df_volume_daily = pd.DataFrame(
-        100000.0,
-        index=df_return_daily.index,
-        columns=df_return_daily.columns
-    )
+    # 成交量用缓存里的真实数据; 旧缓存没有时退回恒定值(仅保证能跑, 此时流动性因子没有意义)
+    df_volume_daily = cache_data.get('volume')
+    if df_volume_daily is None:
+        logger.warning("缓存中没有成交量数据, 使用恒定成交量, 流动性因子结果无意义")
+        df_volume_daily = pd.DataFrame(
+            100000.0,
+            index=df_return_daily.index,
+            columns=df_return_daily.columns
+        )
 
-    logger.info(f"月度价格: {df_price_monthly.shape}")
+    logger.info(f"日频价格: {df_price.shape}")
     logger.info(f"月度收益: {df_return_monthly.shape}")
 
     # 2. 计算所有因子
@@ -142,35 +148,35 @@ def main():
     # 动量因子
     logger.info("\n--- 动量因子 ---")
     momentum = MomentumFactor()
-    df_momentum = momentum.calculate(df_price_monthly, df_volume_daily, df_return_daily)
+    df_momentum = momentum.calculate(df_price, df_volume_daily, df_return_daily)
     factors_dict['Momentum'] = df_momentum
     logger.info(f"形状: {df_momentum.shape}")
 
     # 反转因子
     logger.info("\n--- 反转因子 ---")
     reversal = ReversalFactor()
-    df_reversal = reversal.calculate(df_price_monthly, df_volume_daily, df_return_daily)
+    df_reversal = reversal.calculate(df_price, df_volume_daily, df_return_daily)
     factors_dict['Reversal'] = df_reversal
     logger.info(f"形状: {df_reversal.shape}")
 
     # 低波因子
     logger.info("\n--- 低波因子 ---")
     low_vol = LowVolatilityFactor()
-    df_low_vol = low_vol.calculate(df_price_monthly, df_volume_daily, df_return_daily)
+    df_low_vol = low_vol.calculate(df_price, df_volume_daily, df_return_daily)
     factors_dict['LowVolatility'] = df_low_vol
     logger.info(f"形状: {df_low_vol.shape}")
 
     # 趋势因子
     logger.info("\n--- 趋势因子 ---")
     trend = TrendFactor()
-    df_trend = trend.calculate(df_price_monthly, df_volume_daily, df_return_daily)
+    df_trend = trend.calculate(df_price, df_volume_daily, df_return_daily)
     factors_dict['Trend'] = df_trend
     logger.info(f"形状: {df_trend.shape}")
 
     # 流动性因子
     logger.info("\n--- 流动性因子 ---")
     liquidity = LiquidityFactor()
-    df_liquidity = liquidity.calculate(df_price_monthly, df_volume_daily, df_return_daily)
+    df_liquidity = liquidity.calculate(df_price, df_volume_daily, df_return_daily)
     factors_dict['Liquidity'] = df_liquidity
     logger.info(f"形状: {df_liquidity.shape}")
 
