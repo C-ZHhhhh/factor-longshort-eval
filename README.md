@@ -4,6 +4,8 @@
 
 **当前结论**：在这个样本（2015 ~ 2026-01）和配置下，所有因子和合成因子扣除成本后都是负收益，不扣成本也是负的。数字见第 9 节。
 
+**在线报告**：[带交互图表的网页版报告](https://c-zhhhhh.github.io/factor-longshort-eval/results/report.html)（净值与回撤、各策略对比、稳健性、市场暴露、Beta 对冲前后）。
+
 > 第 0–8 节讲研究设计和**代码实际做了什么**。当初设计了但没有实现、或者实现了但没用在正式结果里的部分，都用"未实现 / 未使用"标了出来。
 > 第 9 节是结果。
 
@@ -279,7 +281,7 @@ results/        正式结果（表格、报告、图）
 * `significance_summary`、`exposure_summary`、`cagr_diagnostics`
 * `beta_hedge_comparison`：Beta 对冲前后对比
 * `EVALUATION_REPORT.md`：综合评估报告
-* `report.html`：网页版报告。净值和回撤曲线、各策略对比、稳健性、市场暴露都在一页里，鼠标悬停可以看具体数值。GitHub 上只能看到源码，需要下载后用浏览器打开
+* `report.html`：网页版报告。净值和回撤曲线、各策略对比、稳健性、市场暴露都在一页里，鼠标悬停可以看具体数值。[在线打开](https://c-zhhhhh.github.io/factor-longshort-eval/results/report.html)（通过 GitHub Pages 发布）；在 GitHub 的文件页面里点开只能看到源码
 
 运行脚本还会在 `results/` 下生成净值序列、IC 序列等中间文件，这些没有提交到仓库。
 
@@ -415,7 +417,7 @@ results/        正式结果（表格、报告、图）
 - [Beta Hedge](results/beta_hedge_comparison.md) - Beta 对冲前后对比
 - [CAGR Diagnostics](results/cagr_diagnostics.md) - 年化收益计算验证
 - [All Figures](results/figures/) - 完整图表集
-- [网页版报告](results/report.html) - 带交互图表的单文件网页（下载后用浏览器打开）
+- [网页版报告](https://c-zhhhhh.github.io/factor-longshort-eval/results/report.html) - 带交互图表的单文件网页，在线打开（源文件是 `results/report.html`）
 
 **专题总结**（已按修复后的代码更新）
 - [FINAL_SUMMARY.md](FINAL_SUMMARY.md) - 5 个因子（含流动性）和合成因子的对比
